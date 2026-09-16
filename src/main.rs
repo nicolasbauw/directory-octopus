@@ -1,6 +1,7 @@
 mod app;
 mod button_bar;
 mod config;
+mod disk_info;
 mod edit_popup;
 mod panel;
 mod status_bar;

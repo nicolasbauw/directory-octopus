@@ -1,10 +1,16 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
 
 use crate::button_bar::{show_button_bar, ButtonBarConfig};
+use crate::disk_info;
 use crate::edit_popup::{show_edit_popup, DriveSlotEdit, EditPopupAction};
 use crate::panel::{show_panel, PanelState};
 use crate::status_bar::show_status_bar;
 use crate::theme;
+
+/// Espacée d'une seconde : suffisante pour une horloge lisible sans relancer
+/// `df`/`date` à chaque frame.
+const STATUS_REFRESH_INTERVAL: Duration = Duration::from_secs(1);
 
 pub struct DirectoryOctopusApp {
     left: PanelState,
@@ -17,6 +23,15 @@ pub struct DirectoryOctopusApp {
     /// Raccourci de la colonne de gauche en cours d'édition (pop-up ouvert
     /// par un clic droit dessus), le cas échéant.
     editing_drive_slot: Option<DriveSlotEdit>,
+    /// "DISK: 12.3G  FREE: 4.5G" du système de fichiers du panneau actif.
+    disk_status_line: String,
+    /// Date/heure courante, au format de l'utilitaire `date`.
+    clock_line: String,
+    last_status_refresh: Instant,
+    /// Chemin du panneau actif au dernier calcul de `disk_status_line` :
+    /// permet de détecter un changement (nouveau support de stockage choisi)
+    /// et de rafraîchir immédiatement plutôt que d'attendre la minuterie.
+    last_status_path: String,
 }
 
 impl Default for DirectoryOctopusApp {
@@ -29,14 +44,21 @@ impl Default for DirectoryOctopusApp {
         let start_right = std::env::current_dir().unwrap_or_else(|_| PathBuf::from(&home));
         let right = PanelState::at_path("right", start_right);
 
-        Self {
+        let mut app = Self {
             left,
             right,
             buttons: ButtonBarConfig::load_or_default(),
             zoom: theme::DEFAULT_ZOOM,
             min_size_synced_for: 0.0,
             editing_drive_slot: None,
-        }
+            disk_status_line: String::new(),
+            clock_line: String::new(),
+            // Dans le passé pour forcer un premier calcul dès la première frame.
+            last_status_refresh: Instant::now() - STATUS_REFRESH_INTERVAL,
+            last_status_path: String::new(),
+        };
+        app.refresh_status_bar();
+        app
     }
 }
 
@@ -45,6 +67,36 @@ impl DirectoryOctopusApp {
     /// destinataire des raccourcis de navigation et futures actions de bouton.
     fn active_panel_mut(&mut self) -> &mut PanelState {
         if self.left.active { &mut self.left } else { &mut self.right }
+    }
+
+    fn active_panel(&self) -> &PanelState {
+        if self.left.active { &self.left } else { &self.right }
+    }
+
+    /// Recalcule l'espace disque (du panneau actif) et l'horloge affichés
+    /// dans la barre de statut.
+    fn refresh_status_bar(&mut self) {
+        self.disk_status_line = match disk_info::disk_space(Path::new(&self.active_panel().path)) {
+            Some((total, free)) => {
+                format!("DISK: {}  FREE: {}", disk_info::human_size(total), disk_info::human_size(free))
+            }
+            None => "DISK: --  FREE: --".to_owned(),
+        };
+        self.clock_line = disk_info::current_date_time();
+        self.last_status_refresh = Instant::now();
+        self.last_status_path = self.active_panel().path.clone();
+    }
+
+    /// À appeler à chaque frame : rafraîchit la barre de statut immédiatement
+    /// si le panneau actif a changé de répertoire (nouveau support de
+    /// stockage choisi), sinon au plus toutes les `STATUS_REFRESH_INTERVAL`
+    /// (pour que l'horloge et l'espace libre restant continuent d'avancer).
+    fn maybe_refresh_status_bar(&mut self) {
+        if self.active_panel().path != self.last_status_path
+            || self.last_status_refresh.elapsed() >= STATUS_REFRESH_INTERVAL
+        {
+            self.refresh_status_bar();
+        }
     }
 
     fn handle_action(&mut self, action: &str) {
@@ -99,11 +151,20 @@ impl eframe::App for DirectoryOctopusApp {
             )));
         }
 
+        // Vérifié à chaque frame (donc dès la frame suivant un changement de
+        // répertoire du panneau actif, quasi instantané) mais ne relance
+        // réellement `df`/`date` que si le chemin a changé ou qu'une seconde
+        // s'est écoulée.
+        self.maybe_refresh_status_bar();
+        // Garantit qu'une frame sera bien redessinée dans une seconde même
+        // sans interaction utilisateur, pour que l'horloge continue d'avancer.
+        ctx.request_repaint_after(STATUS_REFRESH_INTERVAL);
+
         egui::Panel::bottom("status_bar")
             .exact_size(theme::STATUS_BAR_HEIGHT)
             .frame(egui::Frame::new().fill(theme::BG_GREY).inner_margin(2.0))
             .show(ui, |ui| {
-                show_status_bar(ui, "DISK: -- FREE: --", "today  --:--");
+                show_status_bar(ui, &self.disk_status_line, &self.clock_line);
             });
 
         egui::Panel::bottom("button_bar")

@@ -4,7 +4,9 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+chrono = "0.4.45"
 eframe = "0.36.2"
 egui = "0.36.2"
 serde = { version = "1.0.229", features = ["derive"] }
+sysinfo = "0.39.6"
 toml = "1.1.6"
