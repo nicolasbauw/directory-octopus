@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 
 use crate::button_bar::{show_button_bar, ButtonBarConfig};
+use crate::edit_popup::{show_edit_popup, DriveSlotEdit, EditPopupAction};
 use crate::panel::{show_panel, PanelState};
 use crate::status_bar::show_status_bar;
 use crate::theme;
@@ -13,6 +14,9 @@ pub struct DirectoryOctopusApp {
     /// Dernier niveau de zoom pour lequel la taille minimale de fenêtre a été
     /// envoyée au gestionnaire de fenêtres ; `0.0` force l'envoi initial.
     min_size_synced_for: f32,
+    /// Raccourci de la colonne de gauche en cours d'édition (pop-up ouvert
+    /// par un clic droit dessus), le cas échéant.
+    editing_drive_slot: Option<DriveSlotEdit>,
 }
 
 impl Default for DirectoryOctopusApp {
@@ -28,9 +32,10 @@ impl Default for DirectoryOctopusApp {
         Self {
             left,
             right,
-            buttons: ButtonBarConfig::default_layout(),
+            buttons: ButtonBarConfig::load_or_default(),
             zoom: theme::DEFAULT_ZOOM,
             min_size_synced_for: 0.0,
+            editing_drive_slot: None,
         }
     }
 }
@@ -45,6 +50,12 @@ impl DirectoryOctopusApp {
     fn handle_action(&mut self, action: &str) {
         if let Some(target) = action.strip_prefix("goto:") {
             self.active_panel_mut().navigate_to(PathBuf::from(target));
+            return;
+        }
+        if let Some(row_idx) = action.strip_prefix("edit_drive:").and_then(|s| s.parse::<usize>().ok()) {
+            if let Some(slot) = self.buttons.drive_slots.get(row_idx) {
+                self.editing_drive_slot = Some(DriveSlotEdit::new(row_idx, &slot.label, slot.path.as_ref()));
+            }
             return;
         }
         match action {
@@ -129,5 +140,17 @@ impl eframe::App for DirectoryOctopusApp {
 
         // Liseré 3D en relief tout autour de la fenêtre, façon écran Amiga.
         theme::draw_bevel(ui.painter(), window_rect, true);
+
+        if let Some(edit) = &mut self.editing_drive_slot {
+            match show_edit_popup(&ctx, edit) {
+                EditPopupAction::Save { row_idx, label, path } => {
+                    self.buttons.set_drive_slot(row_idx, label, path);
+                    self.buttons.save_drive_slots();
+                    self.editing_drive_slot = None;
+                }
+                EditPopupAction::Cancel => self.editing_drive_slot = None,
+                EditPopupAction::None => {}
+            }
+        }
     }
 }

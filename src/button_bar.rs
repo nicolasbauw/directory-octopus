@@ -2,6 +2,7 @@ use std::path::PathBuf;
 
 use egui::{Ui, Vec2};
 
+use crate::config::{AppConfig, DriveSlotConfig};
 use crate::theme::{self, ButtonStyle};
 
 /// Un raccourci fixe de la colonne de gauche (HOME:, ROOT:, ...), cliquable
@@ -58,8 +59,8 @@ impl ButtonBarConfig {
                 DriveSlot::new("HOME:", &home),
                 DriveSlot::new("ROOT:", "/"),
                 DriveSlot::new("MEDIA:", "/run/media"),
-                DriveSlot::new("DEVICES:", "/dev"),
                 DriveSlot::new("TRASH:", format!("{home}/.local/share/Trash/files")),
+                DriveSlot::new("DEVICES:", "/dev"),
                 DriveSlot::placeholder("BOOKMARKS:"),
             ],
             rows: vec![
@@ -120,6 +121,42 @@ impl ButtonBarConfig {
             ],
         }
     }
+
+    /// Applique les nouvelles valeurs (libellé + répertoire, saisies dans le
+    /// pop-up d'édition) à un raccourci de la colonne de gauche.
+    pub fn set_drive_slot(&mut self, row_idx: usize, label: String, path: Option<PathBuf>) {
+        if let Some(slot) = self.drive_slots.get_mut(row_idx) {
+            slot.label = label;
+            slot.path = path;
+        }
+    }
+
+    /// Charge les raccourcis personnalisés depuis `~/.config/directory-octopus/`
+    /// s'ils existent ; sinon repart de la disposition par défaut.
+    pub fn load_or_default() -> Self {
+        let mut config = Self::default_layout();
+        if let Some(saved) = AppConfig::load() {
+            if !saved.drive_slots.is_empty() {
+                config.drive_slots = saved
+                    .drive_slots
+                    .into_iter()
+                    .map(|s| DriveSlot { label: s.label, path: s.path })
+                    .collect();
+            }
+        }
+        config
+    }
+
+    /// Sauvegarde les raccourcis personnalisés sur disque (le reste de la
+    /// grille de boutons n'est pas encore personnalisable, donc pas persisté).
+    pub fn save_drive_slots(&self) {
+        let drive_slots = self
+            .drive_slots
+            .iter()
+            .map(|s| DriveSlotConfig { label: s.label.clone(), path: s.path.clone() })
+            .collect();
+        AppConfig { drive_slots }.save();
+    }
 }
 
 /// Affiche la grille de boutons en étirant les colonnes pour occuper toute la
@@ -136,21 +173,13 @@ pub fn show_button_bar(ui: &mut Ui, config: &ButtonBarConfig, on_action: &mut dy
         ui.horizontal(|ui| {
             let drive_slot = config.drive_slots.get(row_idx);
             let drive_size = Vec2::new(theme::DRIVE_LABEL_WIDTH, row_height);
-            let clickable = drive_slot.is_some_and(|s| s.path.is_some());
-            let sense = if clickable { egui::Sense::click() } else { egui::Sense::hover() };
-            let (resp, painter) = ui.allocate_painter(drive_size, sense);
-            let pressed = clickable && resp.is_pointer_button_down_on();
+            // Tous les raccourcis de gauche sont personnalisables : clic
+            // gauche pour y naviguer (s'il pointe déjà vers un chemin), clic
+            // droit pour éditer son libellé et son répertoire.
+            let (resp, painter) = ui.allocate_painter(drive_size, egui::Sense::click());
+            let pressed = resp.is_pointer_button_down_on();
             painter.rect_filled(resp.rect, 0.0, theme::BG_GREY);
-            if clickable {
-                theme::draw_bevel(&painter, resp.rect, !pressed);
-            } else {
-                painter.rect_stroke(
-                    resp.rect,
-                    0.0,
-                    egui::Stroke::new(theme::BEVEL_THICKNESS, theme::BEVEL_DARK),
-                    egui::StrokeKind::Inside,
-                );
-            }
+            theme::draw_bevel(&painter, resp.rect, !pressed);
             if let Some(slot) = drive_slot {
                 painter.text(
                     resp.rect.left_top() + Vec2::new(3.0, theme::BUTTON_TEXT_TOP_PADDING),
@@ -163,6 +192,9 @@ pub fn show_button_bar(ui: &mut Ui, config: &ButtonBarConfig, on_action: &mut dy
                     if let Some(path) = &slot.path {
                         on_action(&format!("goto:{}", path.display()));
                     }
+                }
+                if resp.secondary_clicked() {
+                    on_action(&format!("edit_drive:{row_idx}"));
                 }
             }
 
