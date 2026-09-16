@@ -61,6 +61,7 @@ impl DirectoryOctopusApp {
         match action {
             "select_all" => self.active_panel_mut().select_all(),
             "select_none" => self.active_panel_mut().select_none(),
+            "parent" => self.active_panel_mut().navigate_to_parent(),
             _ => {}
         }
     }

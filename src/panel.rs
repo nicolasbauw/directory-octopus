@@ -82,6 +82,14 @@ impl PanelState {
         let (start, end) = if anchor <= idx { (anchor, idx) } else { (idx, anchor) };
         self.selected = (start..=end).collect();
     }
+
+    /// Remonte d'un niveau dans l'arborescence. Ne fait rien si le panneau
+    /// est déjà à la racine (pas de parent).
+    pub fn navigate_to_parent(&mut self) {
+        if let Some(parent) = Path::new(&self.path).parent() {
+            self.navigate_to(parent.to_path_buf());
+        }
+    }
 }
 
 #[cfg(test)]
@@ -153,6 +161,22 @@ mod tests {
         assert_eq!(panel.range_anchor, None);
         panel.select_range_to(2);
         assert_eq!(panel.selected, HashSet::from([2]));
+    }
+
+    #[test]
+    fn navigate_to_parent_goes_up_one_level() {
+        let mut panel = sample_panel();
+        panel.path = "/a/b/c".into();
+        panel.navigate_to_parent();
+        assert_eq!(panel.path, "/a/b");
+    }
+
+    #[test]
+    fn navigate_to_parent_at_root_does_nothing() {
+        let mut panel = sample_panel();
+        panel.path = "/".into();
+        panel.navigate_to_parent();
+        assert_eq!(panel.path, "/");
     }
 }
 
@@ -235,6 +259,7 @@ pub fn show_panel(ui: &mut Ui, panel: &mut PanelState) -> bool {
     // peu de marge grise en bas, invisible car de la même couleur que le fond.
     let visible_rows = (available_height / theme::LIST_ROW_HEIGHT).floor();
     let scroll_height = visible_rows * theme::LIST_ROW_HEIGHT;
+    let mut navigate_into: Option<PathBuf> = None;
     let list_frame = egui::Frame::new().fill(theme::BG_GREY).show(ui, |ui| {
         ui.set_min_size(Vec2::new(ui.available_width(), available_height));
         ScrollArea::vertical()
@@ -250,6 +275,8 @@ pub fn show_panel(ui: &mut Ui, panel: &mut PanelState) -> bool {
                 ui.spacing_mut().item_spacing.y = 0.0;
                 for idx in 0..panel.entries.len() {
                     let entry = &panel.entries[idx];
+                    let is_dir = entry.is_dir;
+                    let entry_name = entry.name.clone();
                     let is_selected = panel.selected.contains(&idx);
                     // Le fond du panneau reste gris en permanence : seul
                     // l'élément sélectionné reçoit un fond coloré (bleu pour
@@ -308,9 +335,16 @@ pub fn show_panel(ui: &mut Ui, panel: &mut PanelState) -> bool {
                         }
                         activated = true;
                     }
+
+                    if is_dir && row_response.double_clicked() {
+                        navigate_into = Some(PathBuf::from(&panel.path).join(&entry_name));
+                    }
                 }
             });
     });
+    if let Some(target) = navigate_into {
+        panel.navigate_to(target);
+    }
     // Remarque : on n'ajoute pas de zone cliquable couvrant tout le fond du
     // panneau ici — elle recouvrirait les lignes de fichiers et intercepterait
     // leurs clics avant elles (egui donne la priorité au widget du dessus).
