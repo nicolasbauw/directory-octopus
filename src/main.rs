@@ -2,8 +2,9 @@ mod app;
 mod button_bar;
 mod config;
 mod disk_info;
-mod edit_popup;
+mod file_ops;
 mod panel;
+mod popups;
 mod status_bar;
 mod theme;
 

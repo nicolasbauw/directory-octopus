@@ -1,22 +1,35 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use chrono::Local;
-use sysinfo::Disks;
+use sysinfo::{Disk, Disks};
+
+/// Le disque (point de montage Unix, lettre de lecteur/volume Windows/macOS —
+/// `sysinfo` abstrait tout ça) contenant `path` : celui dont le point de
+/// montage préfixe `path` le plus précisément (ex: une clé USB montée sous
+/// /run/media/... plutôt que la racine /).
+fn disk_containing<'a>(disks: &'a Disks, path: &Path) -> Option<&'a Disk> {
+    disks
+        .list()
+        .iter()
+        .filter(|disk| path.starts_with(disk.mount_point()))
+        .max_by_key(|disk| disk.mount_point().as_os_str().len())
+}
 
 /// Espace total et libre (en octets) du système de fichiers contenant
 /// `path`, via `sysinfo` (appels système natifs, portable). `None` si aucun
 /// point de montage connu ne correspond (ne devrait pas arriver en pratique).
 pub fn disk_space(path: &Path) -> Option<(u64, u64)> {
     let disks = Disks::new_with_refreshed_list();
-    // On choisit le point de montage le plus long qui préfixe `path` : c'est
-    // le système de fichiers le plus spécifique (ex: une clé USB montée sous
-    // /run/media/... plutôt que la racine /).
-    disks
-        .list()
-        .iter()
-        .filter(|disk| path.starts_with(disk.mount_point()))
-        .max_by_key(|disk| disk.mount_point().as_os_str().len())
-        .map(|disk| (disk.total_space(), disk.available_space()))
+    disk_containing(&disks, path).map(|disk| (disk.total_space(), disk.available_space()))
+}
+
+/// La racine du support de stockage contenant `path` (le point de montage
+/// lui-même), pour le bouton "Root" : ramène par exemple de
+/// /run/media/nicolasb/SamData/OneDrive à /run/media/nicolasb/SamData,
+/// plutôt qu'à la racine générale du système de fichiers "/".
+pub fn device_root(path: &Path) -> Option<PathBuf> {
+    let disks = Disks::new_with_refreshed_list();
+    disk_containing(&disks, path).map(|disk| disk.mount_point().to_path_buf())
 }
 
 /// Formate une taille en octets de façon compacte (ex: "500B", "12K",

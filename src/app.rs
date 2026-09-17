@@ -3,8 +3,9 @@ use std::time::{Duration, Instant};
 
 use crate::button_bar::{show_button_bar, ButtonBarConfig};
 use crate::disk_info;
-use crate::edit_popup::{show_edit_popup, DriveSlotEdit, EditPopupAction};
+use crate::file_ops;
 use crate::panel::{show_panel, PanelState};
+use crate::popups::{show_modal, ConfirmDeleteState, DriveSlotEdit, Modal, ModalAction, RenameState};
 use crate::status_bar::show_status_bar;
 use crate::theme;
 
@@ -20,9 +21,9 @@ pub struct DirectoryOctopusApp {
     /// Dernier niveau de zoom pour lequel la taille minimale de fenêtre a été
     /// envoyée au gestionnaire de fenêtres ; `0.0` force l'envoi initial.
     min_size_synced_for: f32,
-    /// Raccourci de la colonne de gauche en cours d'édition (pop-up ouvert
-    /// par un clic droit dessus), le cas échéant.
-    editing_drive_slot: Option<DriveSlotEdit>,
+    /// Pop-up actuellement affiché (édition de raccourci, renommage,
+    /// confirmation de suppression), le cas échéant.
+    modal: Option<Modal>,
     /// "DISK: 12.3G  FREE: 4.5G" du système de fichiers du panneau actif.
     disk_status_line: String,
     /// Date/heure courante, au format de l'utilitaire `date`.
@@ -50,7 +51,7 @@ impl Default for DirectoryOctopusApp {
             buttons: ButtonBarConfig::load_or_default(),
             zoom: theme::DEFAULT_ZOOM,
             min_size_synced_for: 0.0,
-            editing_drive_slot: None,
+            modal: None,
             disk_status_line: String::new(),
             clock_line: String::new(),
             // Dans le passé pour forcer un premier calcul dès la première frame.
@@ -71,6 +72,38 @@ impl DirectoryOctopusApp {
 
     fn active_panel(&self) -> &PanelState {
         if self.left.active { &self.left } else { &self.right }
+    }
+
+    fn panel_mut(&mut self, for_left: bool) -> &mut PanelState {
+        if for_left { &mut self.left } else { &mut self.right }
+    }
+
+    /// Le panneau actif (source) et l'autre (destination), pour Copy/Move.
+    fn source_and_dest_mut(&mut self) -> (&mut PanelState, &mut PanelState) {
+        if self.left.active { (&mut self.left, &mut self.right) } else { (&mut self.right, &mut self.left) }
+    }
+
+    /// Copie ou déplace les éléments sélectionnés du panneau actif vers
+    /// l'autre panneau, puis relit le contenu des dossiers concernés.
+    fn copy_or_move(&mut self, is_move: bool) {
+        let (source, dest) = self.source_and_dest_mut();
+        let src_dir = PathBuf::from(&source.path);
+        let dest_dir = PathBuf::from(&dest.path);
+        if src_dir == dest_dir {
+            return;
+        }
+        for entry in source.selected_entries() {
+            let src_path = src_dir.join(&entry.name);
+            let result =
+                if is_move { file_ops::move_into(&src_path, &dest_dir) } else { file_ops::copy_into(&src_path, &dest_dir) };
+            if let Err(err) = result {
+                eprintln!("{} de {src_path:?} échoué : {err}", if is_move { "Déplacement" } else { "Copie" });
+            }
+        }
+        dest.navigate_to(dest_dir);
+        if is_move {
+            source.navigate_to(src_dir);
+        }
     }
 
     /// Recalcule l'espace disque (du panneau actif) et l'horloge affichés
@@ -106,7 +139,7 @@ impl DirectoryOctopusApp {
         }
         if let Some(row_idx) = action.strip_prefix("edit_drive:").and_then(|s| s.parse::<usize>().ok()) {
             if let Some(slot) = self.buttons.drive_slots.get(row_idx) {
-                self.editing_drive_slot = Some(DriveSlotEdit::new(row_idx, &slot.label, slot.path.as_ref()));
+                self.modal = Some(Modal::EditDriveSlot(DriveSlotEdit::new(row_idx, &slot.label, slot.path.as_ref())));
             }
             return;
         }
@@ -114,6 +147,49 @@ impl DirectoryOctopusApp {
             "select_all" => self.active_panel_mut().select_all(),
             "select_none" => self.active_panel_mut().select_none(),
             "parent" => self.active_panel_mut().navigate_to_parent(),
+            "root" => {
+                let panel = self.active_panel_mut();
+                if let Some(root) = disk_info::device_root(Path::new(&panel.path)) {
+                    panel.navigate_to(root);
+                }
+            }
+            "copy" => self.copy_or_move(false),
+            "move" => self.copy_or_move(true),
+            "rename" => {
+                let for_left = self.left.active;
+                let panel = self.active_panel();
+                if panel.selected.len() == 1 {
+                    if let Some(&idx) = panel.selected.iter().next() {
+                        if let Some(entry) = panel.entries.get(idx) {
+                            self.modal = Some(Modal::Rename(RenameState {
+                                for_left,
+                                old_name: entry.name.clone(),
+                                new_name: entry.name.clone(),
+                            }));
+                        }
+                    }
+                }
+            }
+            "delete" => {
+                let for_left = self.left.active;
+                let panel = self.active_panel();
+                let dir = PathBuf::from(&panel.path);
+                let paths: Vec<PathBuf> = panel.selected_entries().map(|e| dir.join(&e.name)).collect();
+                if paths.is_empty() {
+                    return;
+                }
+                if paths.iter().any(|p| file_ops::is_non_empty_dir(p)) {
+                    let message = format!("Delete {} item(s), including non-empty folder(s)?", paths.len());
+                    self.modal = Some(Modal::ConfirmDelete(ConfirmDeleteState { for_left, paths, message }));
+                } else {
+                    for path in &paths {
+                        if let Err(err) = file_ops::delete(path) {
+                            eprintln!("Suppression de {path:?} échouée : {err}");
+                        }
+                    }
+                    self.panel_mut(for_left).navigate_to(dir);
+                }
+            }
             _ => {}
         }
     }
@@ -203,15 +279,38 @@ impl eframe::App for DirectoryOctopusApp {
         // Liseré 3D en relief tout autour de la fenêtre, façon écran Amiga.
         theme::draw_bevel(ui.painter(), window_rect, true);
 
-        if let Some(edit) = &mut self.editing_drive_slot {
-            match show_edit_popup(&ctx, edit) {
-                EditPopupAction::Save { row_idx, label, path } => {
+        if let Some(modal) = &mut self.modal {
+            match show_modal(&ctx, modal) {
+                ModalAction::None => {}
+                ModalAction::Close => self.modal = None,
+                ModalAction::SaveDriveSlot { row_idx, label, path } => {
                     self.buttons.set_drive_slot(row_idx, label, path);
                     self.buttons.save_drive_slots();
-                    self.editing_drive_slot = None;
+                    self.modal = None;
                 }
-                EditPopupAction::Cancel => self.editing_drive_slot = None,
-                EditPopupAction::None => {}
+                ModalAction::ApplyRename { for_left, old_name, new_name } => {
+                    let panel = self.panel_mut(for_left);
+                    let dir = PathBuf::from(&panel.path);
+                    let new_name = new_name.trim();
+                    if !new_name.is_empty() && new_name != old_name {
+                        if let Err(err) = std::fs::rename(dir.join(&old_name), dir.join(new_name)) {
+                            eprintln!("Renommage de {old_name:?} échoué : {err}");
+                        }
+                    }
+                    panel.navigate_to(dir);
+                    self.modal = None;
+                }
+                ModalAction::ConfirmDelete { for_left, paths } => {
+                    for path in &paths {
+                        if let Err(err) = file_ops::delete(path) {
+                            eprintln!("Suppression de {path:?} échouée : {err}");
+                        }
+                    }
+                    let panel = self.panel_mut(for_left);
+                    let dir = PathBuf::from(&panel.path);
+                    panel.navigate_to(dir);
+                    self.modal = None;
+                }
             }
         }
     }
