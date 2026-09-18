@@ -154,6 +154,8 @@ pub enum Modal {
     /// Message d'information simple (ex : outil externe absent), avec un
     /// bouton OK — même mise en page que `Error`, ton différent.
     Info(String),
+    /// Numéro de version (Cargo.toml) et hash court du commit de build.
+    About,
 }
 
 /// Ce que l'utilisateur a décidé de faire du pop-up affiché cette frame.
@@ -771,10 +773,13 @@ fn show_confirm_delete_popup(ctx: &Context, state: &mut ConfirmDeleteState) -> M
 fn show_message_popup(ctx: &Context, heading: &str, message: &str) -> ModalAction {
     let mut action = ModalAction::None;
     popup_frame(ctx, ERROR_POPUP_WIDTH, |ui| {
-        ui.label(RichText::new(heading).color(Color32::BLACK).strong().size(theme::SMALL_TEXT_SIZE));
-        ui.add_space(4.0);
+        if !heading.is_empty() {
+            ui.label(RichText::new(heading).color(Color32::BLACK).strong().size(theme::SMALL_TEXT_SIZE));
+            ui.add_space(4.0);
+        }
         ui.add(
-            egui::Label::new(RichText::new(message).color(Color32::BLACK).size(theme::SMALL_TEXT_SIZE)).wrap(),
+            egui::Label::new(RichText::new(message).color(Color32::BLACK).monospace().size(theme::SMALL_TEXT_SIZE))
+                .wrap(),
         );
         ui.add_space(10.0);
         if popup_button(ui, "OK") {
@@ -806,5 +811,17 @@ pub fn show_modal(ctx: &Context, modal: &mut Modal, window_rect: egui::Rect) -> 
         Modal::ConfirmDelete(state) => show_confirm_delete_popup(ctx, state),
         Modal::Error(message) => show_message_popup(ctx, "Error", message),
         Modal::Info(message) => show_message_popup(ctx, "Info", message),
+        Modal::About => show_message_popup(
+            ctx,
+            "",
+            &format!(
+                "{:<7}: {} ({})\n{:<7}: {}",
+                "Version",
+                env!("CARGO_PKG_VERSION"),
+                if cfg!(debug_assertions) { "dev" } else { "release" },
+                "Commit",
+                env!("GIT_HASH"),
+            ),
+        ),
     }
 }

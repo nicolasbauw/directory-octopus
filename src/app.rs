@@ -442,6 +442,7 @@ impl DirectoryOctopusApp {
                     }
                 }
             }
+            "about" => self.modal = Some(Modal::About),
             "upx" => {
                 let panel = self.active_panel();
                 let dir = PathBuf::from(&panel.path);

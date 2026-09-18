@@ -134,7 +134,7 @@ impl ButtonBarConfig {
                     None,
                     None,
                     None,
-                    None,
+                    Some(b("About", Blue, "about")),
                 ],
             ],
         }
