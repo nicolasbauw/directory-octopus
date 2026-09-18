@@ -43,6 +43,42 @@ fn load_view_file(path: PathBuf, highlight_line: Option<usize>) -> Modal {
     }
 }
 
+/// Formate `bytes` façon `hexdump -C` : décalage, 16 octets en hexa (avec un
+/// espace supplémentaire après le 8e), puis leur rendu ASCII entre `|...|`.
+fn hex_dump_lines(bytes: &[u8]) -> Vec<String> {
+    const HEX_COLUMN_WIDTH: usize = 16 * 3 + 1;
+    bytes
+        .chunks(16)
+        .enumerate()
+        .map(|(i, chunk)| {
+            let mut hex = String::new();
+            for (j, byte) in chunk.iter().enumerate() {
+                if j == 8 {
+                    hex.push(' ');
+                }
+                hex.push_str(&format!("{byte:02x} "));
+            }
+            let ascii: String =
+                chunk.iter().map(|&b| if (0x20..0x7f).contains(&b) { b as char } else { '.' }).collect();
+            format!("{:08x}  {hex:<HEX_COLUMN_WIDTH$} |{ascii}|", i * 16)
+        })
+        .collect()
+}
+
+/// Charge `path` en hexadécimal pour le visualisateur plein écran ("Hex
+/// Read"), ou renvoie un pop-up d'erreur si le fichier est illisible.
+fn load_hex_view(path: PathBuf) -> Modal {
+    match std::fs::read(&path) {
+        Ok(bytes) => {
+            let max_bytes = MAX_VIEW_LINES * 16;
+            let truncated = bytes.len() > max_bytes;
+            let lines = hex_dump_lines(&bytes[..bytes.len().min(max_bytes)]);
+            Modal::ViewFile(ViewFileState { path, lines, truncated, highlight_line: None, scrolled: false })
+        }
+        Err(err) => Modal::Error(format!("Cannot read {}:\n{err}", path.display())),
+    }
+}
+
 pub struct DirectoryOctopusApp {
     left: PanelState,
     right: PanelState,
@@ -237,6 +273,15 @@ impl DirectoryOctopusApp {
                 self.modal = match first_file {
                     Some(path) => Some(load_view_file(path, None)),
                     None => Some(Modal::Error("Select a text file to view.".to_owned())),
+                };
+            }
+            "hex_read" => {
+                let panel = self.active_panel();
+                let dir = PathBuf::from(&panel.path);
+                let first_file = panel.selected_entries().map(|e| dir.join(&e.name)).find(|p| p.is_file());
+                self.modal = match first_file {
+                    Some(path) => Some(load_hex_view(path)),
+                    None => Some(Modal::Error("Select a file to view in hex.".to_owned())),
                 };
             }
             "rename" => {
