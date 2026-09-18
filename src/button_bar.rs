@@ -78,8 +78,8 @@ impl ButtonBarConfig {
                 DriveSlot::new("ROOT:", "/"),
                 DriveSlot::new("MEDIA:", "/run/media"),
                 DriveSlot::new("TRASH:", format!("{home}/.local/share/Trash/files")),
-                DriveSlot::new("DEVICES:", "/dev"),
-                DriveSlot::placeholder("BOOKMARKS:"),
+                DriveSlot::placeholder("CUSTOMIZE:"),
+                DriveSlot::placeholder("CUSTOMIZE:"),
             ],
             rows: vec![
                 vec![
