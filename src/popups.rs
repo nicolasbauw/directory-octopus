@@ -73,6 +73,15 @@ pub struct RunState {
     pub args: String,
 }
 
+/// Ajout/édition d'un bouton personnalisé (clic droit sur une case grise, ou
+/// sur un bouton personnalisé existant) : libellé + commande shell.
+pub struct CustomButtonState {
+    pub row_idx: usize,
+    pub col_idx: usize,
+    pub label: String,
+    pub command: String,
+}
+
 /// Édition des droits d'accès des éléments sélectionnés ("Permissions").
 /// Sous Unix : lecture/écriture/exécution pour propriétaire/groupe/autres.
 /// Ailleurs (Windows) : seul l'attribut lecture seule a un équivalent direct.
@@ -133,6 +142,7 @@ pub enum Modal {
     Mount(MountState),
     Run(RunState),
     Permissions(PermissionsState),
+    CustomButton(CustomButtonState),
     Find(FindState),
     FindResults(FindResultsState),
     Search(SearchState),
@@ -156,6 +166,8 @@ pub enum ModalAction {
     Mount { device: String, mount_point: String },
     RunProgram { path: PathBuf, args: String },
     ApplyPermissions(PermissionsState),
+    SaveCustomButton { row_idx: usize, col_idx: usize, label: String, command: String },
+    RemoveCustomButton { row_idx: usize, col_idx: usize },
     RunFind { for_left: bool, pattern: String },
     RunSearch { paths: Vec<PathBuf>, pattern: String },
     JumpTo { for_left: bool, path: PathBuf },
@@ -253,10 +265,23 @@ fn popup_button(ui: &mut egui::Ui, label: &str) -> bool {
     resp.clicked()
 }
 
+/// Entrée = valider (bouton principal), Échap = annuler/fermer — cohérent
+/// sur tous les pop-ups, en plus du clic explicite sur les boutons.
+fn enter_pressed(ctx: &Context) -> bool {
+    ctx.input(|i| i.key_pressed(egui::Key::Enter))
+}
+
+fn escape_pressed(ctx: &Context) -> bool {
+    ctx.input(|i| i.key_pressed(egui::Key::Escape))
+}
+
 /// Enrobe le contenu d'un pop-up dans le même code esthétique partout : fond
 /// gris, relief 3D en bosse, centré à l'écran, au-dessus de tout le reste.
 fn popup_frame(ctx: &Context, min_width: f32, add_contents: impl FnOnce(&mut egui::Ui)) {
-    egui::Area::new(egui::Id::new("app_modal_popup"))
+    // Id distinct de `show_fullscreen_frame` : sinon, en passant d'un pop-up
+    // géant à un petit pop-up (ex : Search -> sortie -> édition d'un bouton),
+    // `egui::Area` réutilisait un instant la taille mémorisée du précédent.
+    egui::Area::new(egui::Id::new("app_modal_popup_normal"))
         .order(egui::Order::Foreground)
         .anchor(egui::Align2::CENTER_CENTER, Vec2::ZERO)
         .show(ctx, |ui| {
@@ -281,7 +306,7 @@ const FULLSCREEN_MARGIN: f32 = 24.0;
 /// taille minimale liée au contenu — pour le visualisateur de fichier.
 fn show_fullscreen_frame(ctx: &Context, window_rect: egui::Rect, add_contents: impl FnOnce(&mut egui::Ui)) {
     let size = (window_rect.size() - Vec2::splat(FULLSCREEN_MARGIN * 2.0)).max(Vec2::splat(100.0));
-    egui::Area::new(egui::Id::new("app_modal_popup"))
+    egui::Area::new(egui::Id::new("app_modal_popup_fullscreen"))
         .order(egui::Order::Foreground)
         .anchor(egui::Align2::CENTER_CENTER, Vec2::ZERO)
         .show(ctx, |ui| {
@@ -321,6 +346,15 @@ fn show_edit_drive_slot_popup(ctx: &Context, edit: &mut DriveSlotEdit) -> ModalA
             }
         });
     });
+    if matches!(action, ModalAction::None) {
+        if escape_pressed(ctx) {
+            action = ModalAction::Close;
+        } else if enter_pressed(ctx) {
+            let label = if edit.label.trim().is_empty() { "UNNAMED".to_owned() } else { format!("{}:", edit.label.trim()) };
+            let path = if edit.path.trim().is_empty() { None } else { Some(PathBuf::from(edit.path.trim())) };
+            action = ModalAction::SaveDriveSlot { row_idx: edit.row_idx, label, path };
+        }
+    }
     action
 }
 
@@ -343,6 +377,17 @@ fn show_rename_popup(ctx: &Context, state: &mut RenameState) -> ModalAction {
             }
         });
     });
+    if matches!(action, ModalAction::None) {
+        if escape_pressed(ctx) {
+            action = ModalAction::Close;
+        } else if enter_pressed(ctx) {
+            action = ModalAction::ApplyRename {
+                for_left: state.for_left,
+                old_name: state.old_name.clone(),
+                new_name: state.new_name.clone(),
+            };
+        }
+    }
     action
 }
 
@@ -361,6 +406,13 @@ fn show_makedir_popup(ctx: &Context, state: &mut MakeDirState) -> ModalAction {
             }
         });
     });
+    if matches!(action, ModalAction::None) {
+        if escape_pressed(ctx) {
+            action = ModalAction::Close;
+        } else if enter_pressed(ctx) {
+            action = ModalAction::CreateDir { for_left: state.for_left, name: state.name.clone() };
+        }
+    }
     action
 }
 
@@ -382,6 +434,13 @@ fn show_mount_popup(ctx: &Context, state: &mut MountState) -> ModalAction {
             }
         });
     });
+    if matches!(action, ModalAction::None) {
+        if escape_pressed(ctx) {
+            action = ModalAction::Close;
+        } else if enter_pressed(ctx) {
+            action = ModalAction::Mount { device: state.device.clone(), mount_point: state.mount_point.clone() };
+        }
+    }
     action
 }
 
@@ -404,6 +463,60 @@ fn show_run_popup(ctx: &Context, state: &mut RunState) -> ModalAction {
             }
         });
     });
+    if matches!(action, ModalAction::None) {
+        if escape_pressed(ctx) {
+            action = ModalAction::Close;
+        } else if enter_pressed(ctx) {
+            action = ModalAction::RunProgram { path: state.path.clone(), args: state.args.clone() };
+        }
+    }
+    action
+}
+
+fn show_custom_button_popup(ctx: &Context, state: &mut CustomButtonState) -> ModalAction {
+    let mut action = ModalAction::None;
+    popup_frame(ctx, DEFAULT_POPUP_WIDTH, |ui| {
+        ui.label(RichText::new("Label").color(Color32::BLACK).size(theme::SMALL_TEXT_SIZE));
+        styled_text_edit(ui, &mut state.label);
+        ui.add_space(8.0);
+        ui.label(RichText::new("Command").color(Color32::BLACK).size(theme::SMALL_TEXT_SIZE));
+        styled_text_edit(ui, &mut state.command);
+        ui.label(
+            RichText::new("$1 = selected file/folder (optional)")
+                .color(Color32::BLACK)
+                .italics()
+                .size(theme::SMALL_TEXT_SIZE),
+        );
+        ui.add_space(10.0);
+        ui.horizontal(|ui| {
+            if popup_button(ui, "OK") {
+                action = ModalAction::SaveCustomButton {
+                    row_idx: state.row_idx,
+                    col_idx: state.col_idx,
+                    label: state.label.clone(),
+                    command: state.command.clone(),
+                };
+            }
+            if popup_button(ui, "Remove") {
+                action = ModalAction::RemoveCustomButton { row_idx: state.row_idx, col_idx: state.col_idx };
+            }
+            if popup_button(ui, "Cancel") {
+                action = ModalAction::Close;
+            }
+        });
+    });
+    if matches!(action, ModalAction::None) {
+        if escape_pressed(ctx) {
+            action = ModalAction::Close;
+        } else if enter_pressed(ctx) {
+            action = ModalAction::SaveCustomButton {
+                row_idx: state.row_idx,
+                col_idx: state.col_idx,
+                label: state.label.clone(),
+                command: state.command.clone(),
+            };
+        }
+    }
     action
 }
 
@@ -451,6 +564,13 @@ fn show_permissions_popup(ctx: &Context, state: &mut PermissionsState) -> ModalA
             }
         });
     });
+    if matches!(action, ModalAction::None) {
+        if escape_pressed(ctx) {
+            action = ModalAction::Close;
+        } else if enter_pressed(ctx) {
+            action = ModalAction::ApplyPermissions(state.clone());
+        }
+    }
     action
 }
 
@@ -469,6 +589,13 @@ fn show_find_popup(ctx: &Context, state: &mut FindState) -> ModalAction {
             }
         });
     });
+    if matches!(action, ModalAction::None) {
+        if escape_pressed(ctx) {
+            action = ModalAction::Close;
+        } else if enter_pressed(ctx) {
+            action = ModalAction::RunFind { for_left: state.for_left, pattern: state.pattern.clone() };
+        }
+    }
     action
 }
 
@@ -500,6 +627,9 @@ fn show_find_results_popup(ctx: &Context, state: &FindResultsState) -> ModalActi
             action = ModalAction::Close;
         }
     });
+    if matches!(action, ModalAction::None) && (enter_pressed(ctx) || escape_pressed(ctx)) {
+        action = ModalAction::Close;
+    }
     action
 }
 
@@ -522,6 +652,13 @@ fn show_search_popup(ctx: &Context, state: &mut SearchState) -> ModalAction {
             }
         });
     });
+    if matches!(action, ModalAction::None) {
+        if escape_pressed(ctx) {
+            action = ModalAction::Close;
+        } else if enter_pressed(ctx) {
+            action = ModalAction::RunSearch { paths: state.paths.clone(), pattern: state.pattern.clone() };
+        }
+    }
     action
 }
 
@@ -554,6 +691,9 @@ fn show_search_results_popup(ctx: &Context, state: &SearchResultsState) -> Modal
             action = ModalAction::Close;
         }
     });
+    if matches!(action, ModalAction::None) && (enter_pressed(ctx) || escape_pressed(ctx)) {
+        action = ModalAction::Close;
+    }
     action
 }
 
@@ -598,6 +738,9 @@ fn show_view_file_popup(ctx: &Context, state: &mut ViewFileState, window_rect: e
             action = ModalAction::Close;
         }
     });
+    if matches!(action, ModalAction::None) && (enter_pressed(ctx) || escape_pressed(ctx)) {
+        action = ModalAction::Close;
+    }
     action
 }
 
@@ -615,6 +758,13 @@ fn show_confirm_delete_popup(ctx: &Context, state: &mut ConfirmDeleteState) -> M
             }
         });
     });
+    if matches!(action, ModalAction::None) {
+        if escape_pressed(ctx) {
+            action = ModalAction::Close;
+        } else if enter_pressed(ctx) {
+            action = ModalAction::ConfirmDelete { for_left: state.for_left, paths: state.paths.clone() };
+        }
+    }
     action
 }
 
@@ -631,6 +781,9 @@ fn show_message_popup(ctx: &Context, heading: &str, message: &str) -> ModalActio
             action = ModalAction::Close;
         }
     });
+    if matches!(action, ModalAction::None) && (enter_pressed(ctx) || escape_pressed(ctx)) {
+        action = ModalAction::Close;
+    }
     action
 }
 
@@ -644,6 +797,7 @@ pub fn show_modal(ctx: &Context, modal: &mut Modal, window_rect: egui::Rect) -> 
         Modal::Mount(state) => show_mount_popup(ctx, state),
         Modal::Run(state) => show_run_popup(ctx, state),
         Modal::Permissions(state) => show_permissions_popup(ctx, state),
+        Modal::CustomButton(state) => show_custom_button_popup(ctx, state),
         Modal::Find(state) => show_find_popup(ctx, state),
         Modal::FindResults(state) => show_find_results_popup(ctx, state),
         Modal::Search(state) => show_search_popup(ctx, state),

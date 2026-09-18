@@ -9,9 +9,9 @@ use crate::file_ops;
 use crate::grep;
 use crate::panel::{show_panel, PanelState};
 use crate::popups::{
-    show_modal, ConfirmDeleteState, DriveSlotEdit, FindResultsState, FindState, MakeDirState, Modal, ModalAction,
-    MountState, PermissionsState, RenameState, RunState, SearchResultLine, SearchResultsState, SearchState,
-    ViewFileState,
+    show_modal, ConfirmDeleteState, CustomButtonState, DriveSlotEdit, FindResultsState, FindState, MakeDirState,
+    Modal, ModalAction, MountState, PermissionsState, RenameState, RunState, SearchResultLine, SearchResultsState,
+    SearchState, ViewFileState,
 };
 use crate::search;
 use crate::status_bar::show_status_bar;
@@ -70,6 +70,13 @@ fn hex_dump_lines(bytes: &[u8]) -> Vec<String> {
 
 /// Heuristique simple (façon `git`) : un fichier est considéré texte si ses
 /// premiers octets ne contiennent aucun octet nul.
+/// Découpe `"R:C"` (format des actions `add_button:`/`edit_button:`) en
+/// coordonnées de grille, ou `None` si mal formé.
+fn parse_row_col(s: &str) -> Option<(usize, usize)> {
+    let (row, col) = s.split_once(':')?;
+    Some((row.parse().ok()?, col.parse().ok()?))
+}
+
 fn is_text_file(path: &Path) -> bool {
     match std::fs::read(path) {
         Ok(bytes) => !bytes[..bytes.len().min(8192)].contains(&0),
@@ -237,6 +244,65 @@ impl DirectoryOctopusApp {
         }
     }
 
+    /// Exécute la commande d'un bouton personnalisé via un shell (pour
+    /// supporter pipes/redirections comme un utilisateur les taperait dans un
+    /// terminal), depuis le dossier du panneau actif. Si elle produit de la
+    /// sortie standard, elle s'affiche dans le visualisateur plein écran ;
+    /// sinon un échec remonte dans le pop-up d'erreur habituel.
+    fn run_custom_command(&self, command: &str) -> Option<Modal> {
+        let panel = self.active_panel();
+        let dir = PathBuf::from(&panel.path);
+        // $1 (sh) / %1 (cmd) : le fichier/dossier sélectionné, le cas échéant
+        // — passé comme argument positionnel plutôt que par substitution
+        // textuelle dans `command`, pour éviter tout souci d'échappement.
+        let selected = panel.selected_entries().next().map(|e| dir.join(&e.name));
+        #[cfg(windows)]
+        let mut cmd = {
+            let mut c = std::process::Command::new("cmd");
+            c.arg("/C").arg(command);
+            if let Some(path) = &selected {
+                c.arg(path);
+            }
+            c
+        };
+        #[cfg(not(windows))]
+        let mut cmd = {
+            let mut c = std::process::Command::new("sh");
+            c.arg("-c").arg(command).arg("octopus");
+            if let Some(path) = &selected {
+                c.arg(path);
+            }
+            c
+        };
+        cmd.current_dir(&dir);
+        match cmd.output() {
+            Ok(output) => {
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                if !stdout.trim().is_empty() {
+                    let (lines, truncated) = lines_from_content(&stdout);
+                    Some(Modal::ViewFile(ViewFileState {
+                        path: PathBuf::from(format!("{command} (output)")),
+                        lines,
+                        truncated,
+                        highlight_line: None,
+                        scrolled: false,
+                    }))
+                } else if !output.status.success() {
+                    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+                    let message = if stderr.is_empty() {
+                        format!("{command} exited with an error.")
+                    } else {
+                        format!("{command} failed:\n{stderr}")
+                    };
+                    Some(Modal::Error(message))
+                } else {
+                    None
+                }
+            }
+            Err(err) => Some(Modal::Error(format!("Could not run {command}:\n{err}"))),
+        }
+    }
+
     fn handle_action(&mut self, action: &str) {
         if let Some(target) = action.strip_prefix("goto:") {
             self.active_panel_mut().navigate_to(PathBuf::from(target));
@@ -245,6 +311,29 @@ impl DirectoryOctopusApp {
         if let Some(row_idx) = action.strip_prefix("edit_drive:").and_then(|s| s.parse::<usize>().ok()) {
             if let Some(slot) = self.buttons.drive_slots.get(row_idx) {
                 self.modal = Some(Modal::EditDriveSlot(DriveSlotEdit::new(row_idx, &slot.label, slot.path.as_ref())));
+            }
+            return;
+        }
+        if let Some(command) = action.strip_prefix("custom:") {
+            self.modal = self.run_custom_command(command);
+            return;
+        }
+        if let Some((row_idx, col_idx)) = action.strip_prefix("add_button:").and_then(parse_row_col) {
+            self.modal =
+                Some(Modal::CustomButton(CustomButtonState { row_idx, col_idx, label: String::new(), command: String::new() }));
+            return;
+        }
+        if let Some((row_idx, col_idx)) = action.strip_prefix("edit_button:").and_then(parse_row_col) {
+            if let Some(slot) = self.buttons.rows.get(row_idx).and_then(|row| row.get(col_idx)).and_then(|s| s.as_ref())
+            {
+                if let Some(command) = &slot.command {
+                    self.modal = Some(Modal::CustomButton(CustomButtonState {
+                        row_idx,
+                        col_idx,
+                        label: slot.label.clone(),
+                        command: command.clone(),
+                    }));
+                }
             }
             return;
         }
@@ -522,7 +611,7 @@ impl eframe::App for DirectoryOctopusApp {
                 ModalAction::Close => self.modal = None,
                 ModalAction::SaveDriveSlot { row_idx, label, path } => {
                     self.buttons.set_drive_slot(row_idx, label, path);
-                    self.buttons.save_drive_slots();
+                    self.buttons.save();
                     self.modal = None;
                 }
                 ModalAction::ApplyRename { for_left, old_name, new_name } => {
@@ -634,6 +723,20 @@ impl eframe::App for DirectoryOctopusApp {
                     } else {
                         Some(Modal::Error(format!("Could not change permissions:\n{}", errors.join("\n"))))
                     };
+                }
+                ModalAction::SaveCustomButton { row_idx, col_idx, label, command } => {
+                    let label = label.trim();
+                    let command = command.trim();
+                    if !label.is_empty() && !command.is_empty() {
+                        self.buttons.set_custom_button(row_idx, col_idx, label.to_owned(), command.to_owned());
+                        self.buttons.save();
+                    }
+                    self.modal = None;
+                }
+                ModalAction::RemoveCustomButton { row_idx, col_idx } => {
+                    self.buttons.remove_custom_button(row_idx, col_idx);
+                    self.buttons.save();
+                    self.modal = None;
                 }
                 ModalAction::RunFind { for_left, pattern } => {
                     let root = PathBuf::from(&self.panel_mut(for_left).path);

@@ -116,6 +116,13 @@ pub fn draw_bevel(painter: &egui::Painter, rect: egui::Rect, raised: bool) {
     );
 }
 
+/// Point blanc en haut à droite distinguant un bouton personnalisé (ajouté
+/// par l'utilisateur) d'un bouton built-in.
+pub fn draw_custom_marker(painter: &egui::Painter, rect: egui::Rect) {
+    let center = rect.right_top() + egui::Vec2::new(-5.0, 5.0);
+    painter.circle_filled(center, 2.5, Color32::WHITE);
+}
+
 /// Bandeau de titre du panneau actif.
 pub const HEADER_ACTIVE_BG: Color32 = Color32::from_rgb(172, 51, 23);
 /// Bandeau de titre du panneau inactif (reprend le gris de fond).

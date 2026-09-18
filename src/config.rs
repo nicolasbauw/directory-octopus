@@ -10,10 +10,22 @@ pub struct DriveSlotConfig {
     pub path: Option<PathBuf>,
 }
 
+/// Un bouton ajouté par l'utilisateur (clic droit sur une case grise de la
+/// grille du bas), tel que persisté sur disque.
+#[derive(Serialize, Deserialize, Clone)]
+pub struct CustomButtonConfig {
+    pub row: usize,
+    pub col: usize,
+    pub label: String,
+    pub command: String,
+}
+
 /// Paramétrage utilisateur persisté entre deux lancements.
 #[derive(Serialize, Deserialize, Clone, Default)]
 pub struct AppConfig {
     pub drive_slots: Vec<DriveSlotConfig>,
+    #[serde(default)]
+    pub custom_buttons: Vec<CustomButtonConfig>,
 }
 
 fn config_dir() -> PathBuf {
@@ -65,6 +77,12 @@ mod tests {
                 DriveSlotConfig { label: "HOME:".into(), path: Some(PathBuf::from("/home/user")) },
                 DriveSlotConfig { label: "BOOKMARKS:".into(), path: None },
             ],
+            custom_buttons: vec![CustomButtonConfig {
+                row: 4,
+                col: 2,
+                label: "Foo".into(),
+                command: "echo foo".into(),
+            }],
         };
         config.save();
 
@@ -73,6 +91,8 @@ mod tests {
         assert_eq!(loaded.drive_slots[0].label, "HOME:");
         assert_eq!(loaded.drive_slots[0].path, Some(PathBuf::from("/home/user")));
         assert_eq!(loaded.drive_slots[1].path, None);
+        assert_eq!(loaded.custom_buttons.len(), 1);
+        assert_eq!(loaded.custom_buttons[0].command, "echo foo");
 
         let _ = std::fs::remove_dir_all(&tmp);
         unsafe { std::env::remove_var("XDG_CONFIG_HOME") };

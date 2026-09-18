@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use egui::{Ui, Vec2};
 
-use crate::config::{AppConfig, DriveSlotConfig};
+use crate::config::{AppConfig, CustomButtonConfig, DriveSlotConfig};
 use crate::theme::{self, ButtonStyle};
 
 /// Un raccourci fixe de la colonne de gauche (HOME:, ROOT:, ...), cliquable
@@ -27,16 +27,27 @@ impl DriveSlot {
 
 /// Un bouton de la grille du bas. `action` est un identifiant libre, destiné plus
 /// tard à être relié à une fonctionnalité built-in ou à un script utilisateur.
+/// `command` n'est renseigné que pour les boutons ajoutés par l'utilisateur
+/// (clic droit sur une case grise) : il marque le bouton comme "personnalisé"
+/// (liseré distinctif, ré-éditable) et porte la commande shell à exécuter.
 #[derive(Clone)]
 pub struct ButtonSlot {
     pub label: String,
     pub style: ButtonStyle,
     pub action: Option<String>,
+    pub command: Option<String>,
 }
 
 impl ButtonSlot {
     pub fn new(label: &str, style: ButtonStyle, action: &str) -> Self {
-        Self { label: label.to_owned(), style, action: Some(action.to_owned()) }
+        Self { label: label.to_owned(), style, action: Some(action.to_owned()), command: None }
+    }
+
+    /// Bouton ajouté par l'utilisateur : la couleur reprend celle de la
+    /// colonne, l'action exécute directement `command` via un shell.
+    pub fn custom(label: String, style: ButtonStyle, command: String) -> Self {
+        let action = format!("custom:{command}");
+        Self { label, style, action: Some(action), command: Some(command) }
     }
 }
 
@@ -138,8 +149,37 @@ impl ButtonBarConfig {
         }
     }
 
-    /// Charge les raccourcis personnalisés depuis `~/.config/directory-octopus/`
-    /// s'ils existent ; sinon repart de la disposition par défaut.
+    /// Couleur "de la colonne" `col_idx` : celle du premier bouton non-vide
+    /// qui s'y trouve (built-in ou personnalisé), pour que les boutons
+    /// ajoutés par l'utilisateur reprennent le code couleur existant. Repli
+    /// sur `Grey` si la colonne est entièrement vide.
+    pub fn column_style(&self, col_idx: usize) -> ButtonStyle {
+        self.rows
+            .iter()
+            .filter_map(|row| row.get(col_idx).and_then(|slot| slot.as_ref()))
+            .map(|slot| slot.style)
+            .next()
+            .unwrap_or(ButtonStyle::Grey)
+    }
+
+    /// Ajoute (ou remplace) un bouton personnalisé à l'emplacement donné.
+    pub fn set_custom_button(&mut self, row_idx: usize, col_idx: usize, label: String, command: String) {
+        let style = self.column_style(col_idx);
+        if let Some(slot) = self.rows.get_mut(row_idx).and_then(|row| row.get_mut(col_idx)) {
+            *slot = Some(ButtonSlot::custom(label, style, command));
+        }
+    }
+
+    /// Retire un bouton personnalisé, redonnant sa case grise vide.
+    pub fn remove_custom_button(&mut self, row_idx: usize, col_idx: usize) {
+        if let Some(slot) = self.rows.get_mut(row_idx).and_then(|row| row.get_mut(col_idx)) {
+            *slot = None;
+        }
+    }
+
+    /// Charge les raccourcis et boutons personnalisés depuis
+    /// `~/.config/directory-octopus/` s'ils existent ; sinon repart de la
+    /// disposition par défaut.
     pub fn load_or_default() -> Self {
         let mut config = Self::default_layout();
         if let Some(saved) = AppConfig::load() {
@@ -150,19 +190,39 @@ impl ButtonBarConfig {
                     .map(|s| DriveSlot { label: s.label, path: s.path })
                     .collect();
             }
+            for button in saved.custom_buttons {
+                config.set_custom_button(button.row, button.col, button.label, button.command);
+            }
         }
         config
     }
 
-    /// Sauvegarde les raccourcis personnalisés sur disque (le reste de la
-    /// grille de boutons n'est pas encore personnalisable, donc pas persisté).
-    pub fn save_drive_slots(&self) {
+    /// Sauvegarde les raccourcis de gauche et les boutons personnalisés sur
+    /// disque.
+    pub fn save(&self) {
         let drive_slots = self
             .drive_slots
             .iter()
             .map(|s| DriveSlotConfig { label: s.label.clone(), path: s.path.clone() })
             .collect();
-        AppConfig { drive_slots }.save();
+        let custom_buttons = self
+            .rows
+            .iter()
+            .enumerate()
+            .flat_map(|(row_idx, row)| {
+                row.iter().enumerate().filter_map(move |(col_idx, slot)| {
+                    let slot = slot.as_ref()?;
+                    let command = slot.command.as_ref()?;
+                    Some(CustomButtonConfig {
+                        row: row_idx,
+                        col: col_idx,
+                        label: slot.label.clone(),
+                        command: command.clone(),
+                    })
+                })
+            })
+            .collect();
+        AppConfig { drive_slots, custom_buttons }.save();
     }
 }
 
@@ -209,7 +269,7 @@ pub fn show_button_bar(ui: &mut Ui, config: &ButtonBarConfig, on_action: &mut dy
             let button_width = ((remaining - spacing * (columns - 1.0)) / columns).max(1.0);
             let size = Vec2::new(button_width, row_height);
 
-            for slot in row.iter() {
+            for (col_idx, slot) in row.iter().enumerate() {
                 match slot {
                     Some(slot) => {
                         let (resp, painter) = ui.allocate_painter(size, egui::Sense::click());
@@ -217,6 +277,9 @@ pub fn show_button_bar(ui: &mut Ui, config: &ButtonBarConfig, on_action: &mut dy
                         let pressed = resp.is_pointer_button_down_on();
                         painter.rect_filled(resp.rect, 0.0, bg);
                         theme::draw_bevel(&painter, resp.rect, !pressed);
+                        if slot.command.is_some() {
+                            theme::draw_custom_marker(&painter, resp.rect);
+                        }
                         painter.text(
                             egui::pos2(resp.rect.center().x, resp.rect.top() + theme::BUTTON_TEXT_TOP_PADDING),
                             egui::Align2::CENTER_TOP,
@@ -229,9 +292,12 @@ pub fn show_button_bar(ui: &mut Ui, config: &ButtonBarConfig, on_action: &mut dy
                                 on_action(action);
                             }
                         }
+                        if resp.secondary_clicked() && slot.command.is_some() {
+                            on_action(&format!("edit_button:{row_idx}:{col_idx}"));
+                        }
                     }
                     None => {
-                        let (resp, painter) = ui.allocate_painter(size, egui::Sense::hover());
+                        let (resp, painter) = ui.allocate_painter(size, egui::Sense::click());
                         painter.rect_filled(resp.rect, 0.0, theme::BG_GREY);
                         painter.rect_stroke(
                             resp.rect,
@@ -239,6 +305,9 @@ pub fn show_button_bar(ui: &mut Ui, config: &ButtonBarConfig, on_action: &mut dy
                             egui::Stroke::new(theme::BEVEL_THICKNESS, theme::BEVEL_DARK),
                             egui::StrokeKind::Inside,
                         );
+                        if resp.secondary_clicked() {
+                            on_action(&format!("add_button:{row_idx}:{col_idx}"));
+                        }
                     }
                 }
             }
