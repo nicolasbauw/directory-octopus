@@ -13,17 +13,6 @@ pub fn show_status_bar(ui: &mut Ui, disk_free_label: &str, date_time_label: &str
                 .monospace(),
         );
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            for letter in ["Q", "I", "C", "F", "E", "?"] {
-                ui.add(
-                    egui::Button::new(
-                        RichText::new(letter)
-                            .color(egui::Color32::BLACK)
-                            .size(theme::SMALL_TEXT_SIZE)
-                            .monospace(),
-                    )
-                    .min_size(Vec2::new(16.0, theme::STATUS_BAR_HEIGHT - 4.0)),
-                );
-            }
             ui.label(
                 RichText::new(date_time_label)
                     .color(egui::Color32::BLACK)
