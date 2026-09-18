@@ -4,16 +4,37 @@ use std::time::{Duration, Instant};
 use crate::button_bar::{show_button_bar, ButtonBarConfig};
 use crate::disk_info;
 use crate::file_ops;
+use crate::grep;
 use crate::panel::{show_panel, PanelState};
 use crate::popups::{
-    show_modal, ConfirmDeleteState, DriveSlotEdit, MakeDirState, Modal, ModalAction, MountState, RenameState,
+    show_modal, ConfirmDeleteState, DriveSlotEdit, FindResultsState, FindState, MakeDirState, Modal, ModalAction,
+    MountState, RenameState, SearchResultLine, SearchResultsState, SearchState, ViewFileState,
 };
+use crate::search;
 use crate::status_bar::show_status_bar;
 use crate::theme;
 
 /// Espacée d'une seconde : suffisante pour une horloge lisible sans relancer
 /// `df`/`date` à chaque frame.
 const STATUS_REFRESH_INTERVAL: Duration = Duration::from_secs(1);
+
+/// Plafond de lignes affichées par le visualisateur de fichier, pour rester
+/// réactif même sur un très gros fichier (log, dump...).
+const MAX_VIEW_LINES: usize = 20_000;
+
+/// Charge `path` pour le visualisateur plein écran, ou renvoie un pop-up
+/// d'erreur si le fichier n'est pas du texte lisible.
+fn load_view_file(path: PathBuf, highlight_line: Option<usize>) -> Modal {
+    match std::fs::read_to_string(&path) {
+        Ok(content) => {
+            let mut lines: Vec<String> = content.lines().map(str::to_owned).collect();
+            let truncated = lines.len() > MAX_VIEW_LINES;
+            lines.truncate(MAX_VIEW_LINES);
+            Modal::ViewFile(ViewFileState { path, lines, truncated, highlight_line, scrolled: false })
+        }
+        Err(err) => Modal::Error(format!("Cannot display {}:\n{err}", path.display())),
+    }
+}
 
 pub struct DirectoryOctopusApp {
     left: PanelState,
@@ -78,6 +99,24 @@ impl DirectoryOctopusApp {
 
     fn panel_mut(&mut self, for_left: bool) -> &mut PanelState {
         if for_left { &mut self.left } else { &mut self.right }
+    }
+
+    /// Active le panneau `for_left`/`for_right` et le fait naviguer vers le
+    /// dossier de `path`, en y sélectionnant `path` lui-même (utilisé par
+    /// Find pour "sauter" à un résultat).
+    fn jump_to(&mut self, for_left: bool, path: &Path) {
+        self.left.active = for_left;
+        self.right.active = !for_left;
+        let Some(parent) = path.parent() else { return };
+        let panel = self.panel_mut(for_left);
+        panel.navigate_to(parent.to_path_buf());
+        if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+            if let Some(idx) = panel.entries.iter().position(|e| e.name == name) {
+                panel.selected.clear();
+                panel.selected.insert(idx);
+                panel.range_anchor = Some(idx);
+            }
+        }
     }
 
     /// Le panneau actif (source) et l'autre (destination), pour Copy/Move.
@@ -161,6 +200,29 @@ impl DirectoryOctopusApp {
                 self.modal = Some(Modal::MakeDir(MakeDirState { for_left: self.left.active, name: String::new() }));
             }
             "mount" => self.modal = Some(Modal::Mount(MountState::default())),
+            "find" => {
+                self.modal = Some(Modal::Find(FindState { for_left: self.left.active, pattern: String::new() }));
+            }
+            "search" => {
+                let panel = self.active_panel();
+                let dir = PathBuf::from(&panel.path);
+                let paths: Vec<PathBuf> =
+                    panel.selected_entries().map(|e| dir.join(&e.name)).filter(|p| grep::is_searchable_file(p)).collect();
+                self.modal = if paths.is_empty() {
+                    Some(Modal::Error("Select at least one file to search in.".to_owned()))
+                } else {
+                    Some(Modal::Search(SearchState { paths, pattern: String::new() }))
+                };
+            }
+            "read" => {
+                let panel = self.active_panel();
+                let dir = PathBuf::from(&panel.path);
+                let first_file = panel.selected_entries().map(|e| dir.join(&e.name)).find(|p| p.is_file());
+                self.modal = match first_file {
+                    Some(path) => Some(load_view_file(path, None)),
+                    None => Some(Modal::Error("Select a text file to view.".to_owned())),
+                };
+            }
             "rename" => {
                 let for_left = self.left.active;
                 let panel = self.active_panel();
@@ -286,7 +348,7 @@ impl eframe::App for DirectoryOctopusApp {
         theme::draw_bevel(ui.painter(), window_rect, true);
 
         if let Some(modal) = &mut self.modal {
-            match show_modal(&ctx, modal) {
+            match show_modal(&ctx, modal, window_rect) {
                 ModalAction::None => {}
                 ModalAction::Close => self.modal = None,
                 ModalAction::SaveDriveSlot { row_idx, label, path } => {
@@ -338,6 +400,50 @@ impl eframe::App for DirectoryOctopusApp {
                             Err(err) => Some(Modal::Error(format!("Could not run `mount`: {err}"))),
                         }
                     };
+                }
+                ModalAction::RunFind { for_left, pattern } => {
+                    let root = PathBuf::from(&self.panel_mut(for_left).path);
+                    let pattern = pattern.trim();
+                    self.modal = if pattern.is_empty() {
+                        None
+                    } else {
+                        let outcome = search::find_matches(&root, pattern);
+                        if outcome.matches.len() == 1 && !outcome.truncated {
+                            self.jump_to(for_left, &outcome.matches[0]);
+                            None
+                        } else {
+                            Some(Modal::FindResults(FindResultsState {
+                                for_left,
+                                matches: outcome.matches,
+                                truncated: outcome.truncated,
+                            }))
+                        }
+                    };
+                }
+                ModalAction::RunSearch { paths, pattern } => {
+                    let pattern = pattern.trim();
+                    self.modal = if pattern.is_empty() {
+                        None
+                    } else {
+                        match grep::search_in_files(&paths, pattern) {
+                            Ok(outcome) => Some(Modal::SearchResults(SearchResultsState {
+                                truncated: outcome.truncated,
+                                matches: outcome
+                                    .matches
+                                    .into_iter()
+                                    .map(|m| SearchResultLine { path: m.path, line_number: m.line_number, line: m.line })
+                                    .collect(),
+                            })),
+                            Err(err) => Some(Modal::Error(format!("Invalid search pattern: {err}"))),
+                        }
+                    };
+                }
+                ModalAction::JumpTo { for_left, path } => {
+                    self.jump_to(for_left, &path);
+                    self.modal = None;
+                }
+                ModalAction::ViewFile { path, line } => {
+                    self.modal = Some(load_view_file(path, line));
                 }
                 ModalAction::ConfirmDelete { for_left, paths } => {
                     for path in &paths {

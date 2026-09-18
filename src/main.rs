@@ -3,8 +3,10 @@ mod button_bar;
 mod config;
 mod disk_info;
 mod file_ops;
+mod grep;
 mod panel;
 mod popups;
+mod search;
 mod status_bar;
 mod theme;
 

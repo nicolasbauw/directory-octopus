@@ -75,7 +75,7 @@ impl ButtonBarConfig {
                     Some(b("All", Blue, "select_all")),
                     Some(b("Copy", Purple, "copy")),
                     Some(b("Makedir", Orange, "makedir")),
-                    Some(b("Hunt", Black, "hunt")),
+                    Some(b("Find", Black, "find")),
                     Some(b("Run", Orange, "run")),
                     Some(b("Comment", Grey, "comment")),
                     Some(b("Read", Red, "read")),
