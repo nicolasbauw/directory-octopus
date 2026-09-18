@@ -45,13 +45,23 @@ pub struct ConfirmDeleteState {
     pub message: String,
 }
 
+/// Montage manuel d'un périphérique (Linux/`mount` uniquement).
+#[derive(Default)]
+pub struct MountState {
+    pub device: String,
+    pub mount_point: String,
+}
+
 /// Le pop-up actuellement affiché par-dessus le reste de l'interface, le cas
 /// échéant (un seul à la fois).
 pub enum Modal {
     EditDriveSlot(DriveSlotEdit),
     Rename(RenameState),
     MakeDir(MakeDirState),
+    Mount(MountState),
     ConfirmDelete(ConfirmDeleteState),
+    /// Message d'erreur simple (ex : échec de `mount`), avec un bouton OK.
+    Error(String),
 }
 
 /// Ce que l'utilisateur a décidé de faire du pop-up affiché cette frame.
@@ -61,6 +71,7 @@ pub enum ModalAction {
     SaveDriveSlot { row_idx: usize, label: String, path: Option<PathBuf> },
     ApplyRename { for_left: bool, old_name: String, new_name: String },
     CreateDir { for_left: bool, name: String },
+    Mount { device: String, mount_point: String },
     ConfirmDelete { for_left: bool, paths: Vec<PathBuf> },
 }
 
@@ -106,7 +117,7 @@ fn popup_button(ui: &mut egui::Ui, label: &str) -> bool {
 
 /// Enrobe le contenu d'un pop-up dans le même code esthétique partout : fond
 /// gris, relief 3D en bosse, centré à l'écran, au-dessus de tout le reste.
-fn popup_frame(ctx: &Context, add_contents: impl FnOnce(&mut egui::Ui)) {
+fn popup_frame(ctx: &Context, min_width: f32, add_contents: impl FnOnce(&mut egui::Ui)) {
     egui::Area::new(egui::Id::new("app_modal_popup"))
         .order(egui::Order::Foreground)
         .anchor(egui::Align2::CENTER_CENTER, Vec2::ZERO)
@@ -115,16 +126,19 @@ fn popup_frame(ctx: &Context, add_contents: impl FnOnce(&mut egui::Ui)) {
                 .fill(theme::BG_GREY)
                 .inner_margin(10.0)
                 .show(ui, |ui| {
-                    ui.set_min_width(260.0);
+                    ui.set_min_width(min_width);
                     ui.vertical(add_contents);
                 });
             theme::draw_bevel(ui.painter(), frame_response.response.rect, true);
         });
 }
 
+const DEFAULT_POPUP_WIDTH: f32 = 260.0;
+const ERROR_POPUP_WIDTH: f32 = 420.0;
+
 fn show_edit_drive_slot_popup(ctx: &Context, edit: &mut DriveSlotEdit) -> ModalAction {
     let mut action = ModalAction::None;
-    popup_frame(ctx, |ui| {
+    popup_frame(ctx, DEFAULT_POPUP_WIDTH, |ui| {
         ui.label(RichText::new("Shortcut name").color(Color32::BLACK).size(theme::SMALL_TEXT_SIZE));
         styled_text_edit(ui, &mut edit.label);
         ui.add_space(8.0);
@@ -151,7 +165,7 @@ fn show_edit_drive_slot_popup(ctx: &Context, edit: &mut DriveSlotEdit) -> ModalA
 
 fn show_rename_popup(ctx: &Context, state: &mut RenameState) -> ModalAction {
     let mut action = ModalAction::None;
-    popup_frame(ctx, |ui| {
+    popup_frame(ctx, DEFAULT_POPUP_WIDTH, |ui| {
         ui.label(RichText::new("New name").color(Color32::BLACK).size(theme::SMALL_TEXT_SIZE));
         styled_text_edit(ui, &mut state.new_name);
         ui.add_space(10.0);
@@ -173,7 +187,7 @@ fn show_rename_popup(ctx: &Context, state: &mut RenameState) -> ModalAction {
 
 fn show_makedir_popup(ctx: &Context, state: &mut MakeDirState) -> ModalAction {
     let mut action = ModalAction::None;
-    popup_frame(ctx, |ui| {
+    popup_frame(ctx, DEFAULT_POPUP_WIDTH, |ui| {
         ui.label(RichText::new("Folder name").color(Color32::BLACK).size(theme::SMALL_TEXT_SIZE));
         styled_text_edit(ui, &mut state.name);
         ui.add_space(10.0);
@@ -189,9 +203,30 @@ fn show_makedir_popup(ctx: &Context, state: &mut MakeDirState) -> ModalAction {
     action
 }
 
+fn show_mount_popup(ctx: &Context, state: &mut MountState) -> ModalAction {
+    let mut action = ModalAction::None;
+    popup_frame(ctx, DEFAULT_POPUP_WIDTH, |ui| {
+        ui.label(RichText::new("Device (ex: /dev/sdb1)").color(Color32::BLACK).size(theme::SMALL_TEXT_SIZE));
+        styled_text_edit(ui, &mut state.device);
+        ui.add_space(8.0);
+        ui.label(RichText::new("Mount point").color(Color32::BLACK).size(theme::SMALL_TEXT_SIZE));
+        styled_text_edit(ui, &mut state.mount_point);
+        ui.add_space(10.0);
+        ui.horizontal(|ui| {
+            if popup_button(ui, "Mount") {
+                action = ModalAction::Mount { device: state.device.clone(), mount_point: state.mount_point.clone() };
+            }
+            if popup_button(ui, "Cancel") {
+                action = ModalAction::Close;
+            }
+        });
+    });
+    action
+}
+
 fn show_confirm_delete_popup(ctx: &Context, state: &mut ConfirmDeleteState) -> ModalAction {
     let mut action = ModalAction::None;
-    popup_frame(ctx, |ui| {
+    popup_frame(ctx, DEFAULT_POPUP_WIDTH, |ui| {
         ui.label(RichText::new(&state.message).color(Color32::BLACK).size(theme::SMALL_TEXT_SIZE));
         ui.add_space(10.0);
         ui.horizontal(|ui| {
@@ -206,12 +241,30 @@ fn show_confirm_delete_popup(ctx: &Context, state: &mut ConfirmDeleteState) -> M
     action
 }
 
+fn show_error_popup(ctx: &Context, message: &str) -> ModalAction {
+    let mut action = ModalAction::None;
+    popup_frame(ctx, ERROR_POPUP_WIDTH, |ui| {
+        ui.label(RichText::new("Error").color(Color32::BLACK).strong().size(theme::SMALL_TEXT_SIZE));
+        ui.add_space(4.0);
+        ui.add(
+            egui::Label::new(RichText::new(message).color(Color32::BLACK).size(theme::SMALL_TEXT_SIZE)).wrap(),
+        );
+        ui.add_space(10.0);
+        if popup_button(ui, "OK") {
+            action = ModalAction::Close;
+        }
+    });
+    action
+}
+
 /// Affiche le pop-up correspondant à l'état courant du modal.
 pub fn show_modal(ctx: &Context, modal: &mut Modal) -> ModalAction {
     match modal {
         Modal::EditDriveSlot(edit) => show_edit_drive_slot_popup(ctx, edit),
         Modal::Rename(state) => show_rename_popup(ctx, state),
         Modal::MakeDir(state) => show_makedir_popup(ctx, state),
+        Modal::Mount(state) => show_mount_popup(ctx, state),
         Modal::ConfirmDelete(state) => show_confirm_delete_popup(ctx, state),
+        Modal::Error(message) => show_error_popup(ctx, message),
     }
 }

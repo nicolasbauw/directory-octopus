@@ -54,6 +54,13 @@ impl ButtonBarConfig {
         use ButtonStyle::*;
         let b = ButtonSlot::new;
         let home = std::env::var("HOME").unwrap_or_else(|_| "/".to_owned());
+        // "mount" s'appuie sur l'utilitaire `mount` (Device / Mount point) :
+        // un concept propre à Linux (comme "Assign" l'était à AmigaDOS),
+        // donc ce bouton n'existe que sur cette plateforme.
+        #[cfg(target_os = "linux")]
+        let mount_button = Some(b("Mount", Orange, "mount"));
+        #[cfg(not(target_os = "linux"))]
+        let mount_button = None;
         Self {
             drive_slots: vec![
                 DriveSlot::new("HOME:", &home),
@@ -76,7 +83,7 @@ impl ButtonBarConfig {
                 vec![
                     Some(b("None", Blue, "select_none")),
                     Some(b("Move", Purple, "move")),
-                    Some(b("Assign", Orange, "assign")),
+                    mount_button,
                     Some(b("Search", Black, "search")),
                     None,
                     Some(b("Datestamp", Grey, "datestamp")),
@@ -85,7 +92,7 @@ impl ButtonBarConfig {
                 vec![
                     Some(b("Parent", Blue, "parent")),
                     Some(b("Rename", Purple, "rename")),
-                    Some(b("Check Fit", Orange, "check_fit")),
+                    None,
                     None,
                     None,
                     Some(b("Protect", Grey, "protect")),
@@ -94,7 +101,7 @@ impl ButtonBarConfig {
                 vec![
                     Some(b("Root", Blue, "root")),
                     None,
-                    Some(b("GetSizes", Orange, "get_sizes")),
+                    None,
                     None,
                     None,
                     Some(b("Icon Info", Grey, "icon_info")),

@@ -5,7 +5,9 @@ use crate::button_bar::{show_button_bar, ButtonBarConfig};
 use crate::disk_info;
 use crate::file_ops;
 use crate::panel::{show_panel, PanelState};
-use crate::popups::{show_modal, ConfirmDeleteState, DriveSlotEdit, MakeDirState, Modal, ModalAction, RenameState};
+use crate::popups::{
+    show_modal, ConfirmDeleteState, DriveSlotEdit, MakeDirState, Modal, ModalAction, MountState, RenameState,
+};
 use crate::status_bar::show_status_bar;
 use crate::theme;
 
@@ -158,6 +160,7 @@ impl DirectoryOctopusApp {
             "makedir" => {
                 self.modal = Some(Modal::MakeDir(MakeDirState { for_left: self.left.active, name: String::new() }));
             }
+            "mount" => self.modal = Some(Modal::Mount(MountState::default())),
             "rename" => {
                 let for_left = self.left.active;
                 let panel = self.active_panel();
@@ -314,6 +317,27 @@ impl eframe::App for DirectoryOctopusApp {
                     }
                     panel.navigate_to(dir);
                     self.modal = None;
+                }
+                ModalAction::Mount { device, mount_point } => {
+                    let device = device.trim();
+                    let mount_point = mount_point.trim();
+                    self.modal = if device.is_empty() || mount_point.is_empty() {
+                        None
+                    } else {
+                        match std::process::Command::new("mount").arg(device).arg(mount_point).output() {
+                            Ok(output) if output.status.success() => None,
+                            Ok(output) => {
+                                let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+                                let message = if stderr.is_empty() {
+                                    format!("Mount of {device} on {mount_point} failed.")
+                                } else {
+                                    format!("Mount of {device} on {mount_point} failed:\n{stderr}")
+                                };
+                                Some(Modal::Error(message))
+                            }
+                            Err(err) => Some(Modal::Error(format!("Could not run `mount`: {err}"))),
+                        }
+                    };
                 }
                 ModalAction::ConfirmDelete { for_left, paths } => {
                     for path in &paths {
