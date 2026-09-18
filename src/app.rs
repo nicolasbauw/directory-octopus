@@ -284,6 +284,17 @@ impl DirectoryOctopusApp {
                     None => Some(Modal::Error("Select a text file to view.".to_owned())),
                 };
             }
+            "datestamp" => {
+                let panel = self.active_panel();
+                let dir = PathBuf::from(&panel.path);
+                let paths: Vec<PathBuf> = panel.selected_entries().map(|e| dir.join(&e.name)).collect();
+                let now = filetime::FileTime::now();
+                for path in &paths {
+                    if let Err(err) = filetime::set_file_times(path, now, now) {
+                        eprintln!("Datestamp de {path:?} échoué : {err}");
+                    }
+                }
+            }
             "edit" => {
                 let panel = self.active_panel();
                 let dir = PathBuf::from(&panel.path);

@@ -77,7 +77,7 @@ impl ButtonBarConfig {
                     Some(b("Makedir", Orange, "makedir")),
                     Some(b("Find", Black, "find")),
                     Some(b("Run", Orange, "run")),
-                    Some(b("Comment", Grey, "comment")),
+                    None,
                     Some(b("Read", Red, "read")),
                 ],
                 vec![
@@ -104,7 +104,7 @@ impl ButtonBarConfig {
                     None,
                     None,
                     None,
-                    Some(b("Icon Info", Grey, "icon_info")),
+                    None,
                     None,
                 ],
                 vec![
