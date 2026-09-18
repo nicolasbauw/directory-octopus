@@ -77,6 +77,15 @@ fn is_text_file(path: &Path) -> bool {
     }
 }
 
+/// Extensions d'archives reconnues pour "Extract" (y compris les doubles
+/// extensions comme `.tar.gz`, dont `Path::extension()` ne renvoie que `gz`).
+const ARCHIVE_EXTENSIONS: &[&str] =
+    &["zip", "tar", "gz", "tgz", "bz2", "tbz2", "xz", "txz", "7z", "rar", "zst", "lz", "lzma", "cab", "iso"];
+
+fn is_archive_file(path: &Path) -> bool {
+    path.extension().and_then(|ext| ext.to_str()).is_some_and(|ext| ARCHIVE_EXTENSIONS.contains(&ext.to_lowercase().as_str()))
+}
+
 /// Charge `path` en hexadécimal pour le visualisateur plein écran ("Hex
 /// Read"), ou renvoie un pop-up d'erreur si le fichier est illisible.
 fn load_hex_view(path: PathBuf) -> Modal {
@@ -338,6 +347,18 @@ impl DirectoryOctopusApp {
                 let first_file = panel.selected_entries().map(|e| dir.join(&e.name)).find(|p| p.is_file());
                 if let Some(path) = first_file {
                     if is_text_file(&path) {
+                        if let Err(err) = open::that(&path) {
+                            self.modal = Some(Modal::Error(format!("Could not open {}:\n{err}", path.display())));
+                        }
+                    }
+                }
+            }
+            "extract" => {
+                let panel = self.active_panel();
+                let dir = PathBuf::from(&panel.path);
+                let first_file = panel.selected_entries().map(|e| dir.join(&e.name)).find(|p| p.is_file());
+                if let Some(path) = first_file {
+                    if is_archive_file(&path) {
                         if let Err(err) = open::that(&path) {
                             self.modal = Some(Modal::Error(format!("Could not open {}:\n{err}", path.display())));
                         }

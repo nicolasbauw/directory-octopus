@@ -95,7 +95,7 @@ impl ButtonBarConfig {
                     None,
                     None,
                     None,
-                    Some(b("Arc Ext", Grey, "arc_ext")),
+                    Some(b("Extract", Grey, "extract")),
                     Some(b("Edit", Red, "edit")),
                 ],
                 vec![
