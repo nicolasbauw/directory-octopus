@@ -67,6 +67,12 @@ pub struct MountState {
     pub mount_point: String,
 }
 
+/// Exécution du fichier sélectionné, avec d'éventuels arguments.
+pub struct RunState {
+    pub path: PathBuf,
+    pub args: String,
+}
+
 /// Saisie du motif (regex) pour "Search", recherché dans les fichiers
 /// sélectionnés au moment de l'ouverture du pop-up.
 pub struct SearchState {
@@ -109,6 +115,7 @@ pub enum Modal {
     Rename(RenameState),
     MakeDir(MakeDirState),
     Mount(MountState),
+    Run(RunState),
     Find(FindState),
     FindResults(FindResultsState),
     Search(SearchState),
@@ -127,6 +134,7 @@ pub enum ModalAction {
     ApplyRename { for_left: bool, old_name: String, new_name: String },
     CreateDir { for_left: bool, name: String },
     Mount { device: String, mount_point: String },
+    RunProgram { path: PathBuf, args: String },
     RunFind { for_left: bool, pattern: String },
     RunSearch { paths: Vec<PathBuf>, pattern: String },
     JumpTo { for_left: bool, path: PathBuf },
@@ -356,6 +364,28 @@ fn show_mount_popup(ctx: &Context, state: &mut MountState) -> ModalAction {
     action
 }
 
+fn show_run_popup(ctx: &Context, state: &mut RunState) -> ModalAction {
+    let mut action = ModalAction::None;
+    popup_frame(ctx, DEFAULT_POPUP_WIDTH, |ui| {
+        ui.label(
+            RichText::new(state.path.display().to_string()).color(Color32::BLACK).strong().size(theme::SMALL_TEXT_SIZE),
+        );
+        ui.add_space(6.0);
+        ui.label(RichText::new("Arguments (optional)").color(Color32::BLACK).size(theme::SMALL_TEXT_SIZE));
+        styled_text_edit(ui, &mut state.args);
+        ui.add_space(10.0);
+        ui.horizontal(|ui| {
+            if popup_button(ui, "Run") {
+                action = ModalAction::RunProgram { path: state.path.clone(), args: state.args.clone() };
+            }
+            if popup_button(ui, "Cancel") {
+                action = ModalAction::Close;
+            }
+        });
+    });
+    action
+}
+
 fn show_find_popup(ctx: &Context, state: &mut FindState) -> ModalAction {
     let mut action = ModalAction::None;
     popup_frame(ctx, DEFAULT_POPUP_WIDTH, |ui| {
@@ -544,6 +574,7 @@ pub fn show_modal(ctx: &Context, modal: &mut Modal, window_rect: egui::Rect) -> 
         Modal::Rename(state) => show_rename_popup(ctx, state),
         Modal::MakeDir(state) => show_makedir_popup(ctx, state),
         Modal::Mount(state) => show_mount_popup(ctx, state),
+        Modal::Run(state) => show_run_popup(ctx, state),
         Modal::Find(state) => show_find_popup(ctx, state),
         Modal::FindResults(state) => show_find_results_popup(ctx, state),
         Modal::Search(state) => show_search_popup(ctx, state),

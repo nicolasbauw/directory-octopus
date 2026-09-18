@@ -8,7 +8,7 @@ use crate::grep;
 use crate::panel::{show_panel, PanelState};
 use crate::popups::{
     show_modal, ConfirmDeleteState, DriveSlotEdit, FindResultsState, FindState, MakeDirState, Modal, ModalAction,
-    MountState, RenameState, SearchResultLine, SearchResultsState, SearchState, ViewFileState,
+    MountState, RenameState, RunState, SearchResultLine, SearchResultsState, SearchState, ViewFileState,
 };
 use crate::search;
 use crate::status_bar::show_status_bar;
@@ -22,14 +22,21 @@ const STATUS_REFRESH_INTERVAL: Duration = Duration::from_secs(1);
 /// réactif même sur un très gros fichier (log, dump...).
 const MAX_VIEW_LINES: usize = 20_000;
 
+/// Découpe `content` en lignes pour le visualisateur plein écran, en coupant
+/// au-delà de `MAX_VIEW_LINES` pour rester réactif.
+fn lines_from_content(content: &str) -> (Vec<String>, bool) {
+    let mut lines: Vec<String> = content.lines().map(str::to_owned).collect();
+    let truncated = lines.len() > MAX_VIEW_LINES;
+    lines.truncate(MAX_VIEW_LINES);
+    (lines, truncated)
+}
+
 /// Charge `path` pour le visualisateur plein écran, ou renvoie un pop-up
 /// d'erreur si le fichier n'est pas du texte lisible.
 fn load_view_file(path: PathBuf, highlight_line: Option<usize>) -> Modal {
     match std::fs::read_to_string(&path) {
         Ok(content) => {
-            let mut lines: Vec<String> = content.lines().map(str::to_owned).collect();
-            let truncated = lines.len() > MAX_VIEW_LINES;
-            lines.truncate(MAX_VIEW_LINES);
+            let (lines, truncated) = lines_from_content(&content);
             Modal::ViewFile(ViewFileState { path, lines, truncated, highlight_line, scrolled: false })
         }
         Err(err) => Modal::Error(format!("Cannot display {}:\n{err}", path.display())),
@@ -212,6 +219,15 @@ impl DirectoryOctopusApp {
                     Some(Modal::Error("Select at least one file to search in.".to_owned()))
                 } else {
                     Some(Modal::Search(SearchState { paths, pattern: String::new() }))
+                };
+            }
+            "run" => {
+                let panel = self.active_panel();
+                let dir = PathBuf::from(&panel.path);
+                let first_file = panel.selected_entries().map(|e| dir.join(&e.name)).find(|p| p.is_file());
+                self.modal = match first_file {
+                    Some(path) => Some(Modal::Run(RunState { path, args: String::new() })),
+                    None => Some(Modal::Error("Select a file to run.".to_owned())),
                 };
             }
             "read" => {
@@ -399,6 +415,42 @@ impl eframe::App for DirectoryOctopusApp {
                             }
                             Err(err) => Some(Modal::Error(format!("Could not run `mount`: {err}"))),
                         }
+                    };
+                }
+                ModalAction::RunProgram { path, args } => {
+                    let dir = path.parent().map(Path::to_path_buf).unwrap_or_else(|| PathBuf::from("."));
+                    let mut command = std::process::Command::new(&path);
+                    command.args(args.split_whitespace()).current_dir(&dir);
+                    let label = if args.trim().is_empty() {
+                        path.display().to_string()
+                    } else {
+                        format!("{} {}", path.display(), args.trim())
+                    };
+                    self.modal = match command.output() {
+                        Ok(output) => {
+                            let stdout = String::from_utf8_lossy(&output.stdout);
+                            if !stdout.trim().is_empty() {
+                                let (lines, truncated) = lines_from_content(&stdout);
+                                Some(Modal::ViewFile(ViewFileState {
+                                    path: PathBuf::from(format!("{label} (output)")),
+                                    lines,
+                                    truncated,
+                                    highlight_line: None,
+                                    scrolled: false,
+                                }))
+                            } else if !output.status.success() {
+                                let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+                                let message = if stderr.is_empty() {
+                                    format!("{label} exited with an error.")
+                                } else {
+                                    format!("{label} failed:\n{stderr}")
+                                };
+                                Some(Modal::Error(message))
+                            } else {
+                                None
+                            }
+                        }
+                        Err(err) => Some(Modal::Error(format!("Could not run {label}:\n{err}"))),
                     };
                 }
                 ModalAction::RunFind { for_left, pattern } => {
