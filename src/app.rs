@@ -1,4 +1,6 @@
 use std::path::{Path, PathBuf};
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
 use std::time::{Duration, Instant};
 
 use crate::button_bar::{show_button_bar, ButtonBarConfig};
@@ -8,7 +10,8 @@ use crate::grep;
 use crate::panel::{show_panel, PanelState};
 use crate::popups::{
     show_modal, ConfirmDeleteState, DriveSlotEdit, FindResultsState, FindState, MakeDirState, Modal, ModalAction,
-    MountState, RenameState, RunState, SearchResultLine, SearchResultsState, SearchState, ViewFileState,
+    MountState, PermissionsState, RenameState, RunState, SearchResultLine, SearchResultsState, SearchState,
+    ViewFileState,
 };
 use crate::search;
 use crate::status_bar::show_status_bar;
@@ -295,6 +298,40 @@ impl DirectoryOctopusApp {
                     }
                 }
             }
+            "permissions" => {
+                let panel = self.active_panel();
+                let dir = PathBuf::from(&panel.path);
+                let paths: Vec<PathBuf> = panel.selected_entries().map(|e| dir.join(&e.name)).collect();
+                self.modal = if paths.is_empty() {
+                    Some(Modal::Error("Select at least one file or folder.".to_owned()))
+                } else {
+                    match std::fs::metadata(&paths[0]) {
+                        Ok(meta) => {
+                            #[cfg(unix)]
+                            {
+                                let mode = meta.permissions().mode();
+                                let bit = |shift: u32| (mode >> shift) & 1 != 0;
+                                Some(Modal::Permissions(PermissionsState {
+                                    paths,
+                                    owner: [bit(8), bit(7), bit(6)],
+                                    group: [bit(5), bit(4), bit(3)],
+                                    other: [bit(2), bit(1), bit(0)],
+                                }))
+                            }
+                            #[cfg(not(unix))]
+                            {
+                                Some(Modal::Permissions(PermissionsState {
+                                    paths,
+                                    read_only: meta.permissions().readonly(),
+                                }))
+                            }
+                        }
+                        Err(err) => {
+                            Some(Modal::Error(format!("Cannot read permissions of {}:\n{err}", paths[0].display())))
+                        }
+                    }
+                };
+            }
             "edit" => {
                 let panel = self.active_panel();
                 let dir = PathBuf::from(&panel.path);
@@ -528,6 +565,35 @@ impl eframe::App for DirectoryOctopusApp {
                             }
                         }
                         Err(err) => Some(Modal::Error(format!("Could not run {label}:\n{err}"))),
+                    };
+                }
+                ModalAction::ApplyPermissions(state) => {
+                    let mut errors = Vec::new();
+                    for path in &state.paths {
+                        #[cfg(unix)]
+                        let result = {
+                            let bits = |flags: [bool; 3], shift: u32| -> u32 {
+                                (u32::from(flags[0]) << (shift + 2))
+                                    | (u32::from(flags[1]) << (shift + 1))
+                                    | (u32::from(flags[2]) << shift)
+                            };
+                            let mode = bits(state.owner, 6) | bits(state.group, 3) | bits(state.other, 0);
+                            std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode))
+                        };
+                        #[cfg(not(unix))]
+                        let result = std::fs::metadata(path).and_then(|meta| {
+                            let mut perms = meta.permissions();
+                            perms.set_readonly(state.read_only);
+                            std::fs::set_permissions(path, perms)
+                        });
+                        if let Err(err) = result {
+                            errors.push(format!("{}: {err}", path.display()));
+                        }
+                    }
+                    self.modal = if errors.is_empty() {
+                        None
+                    } else {
+                        Some(Modal::Error(format!("Could not change permissions:\n{}", errors.join("\n"))))
                     };
                 }
                 ModalAction::RunFind { for_left, pattern } => {

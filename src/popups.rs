@@ -73,6 +73,22 @@ pub struct RunState {
     pub args: String,
 }
 
+/// Édition des droits d'accès des éléments sélectionnés ("Permissions").
+/// Sous Unix : lecture/écriture/exécution pour propriétaire/groupe/autres.
+/// Ailleurs (Windows) : seul l'attribut lecture seule a un équivalent direct.
+#[derive(Clone)]
+pub struct PermissionsState {
+    pub paths: Vec<PathBuf>,
+    #[cfg(unix)]
+    pub owner: [bool; 3],
+    #[cfg(unix)]
+    pub group: [bool; 3],
+    #[cfg(unix)]
+    pub other: [bool; 3],
+    #[cfg(not(unix))]
+    pub read_only: bool,
+}
+
 /// Saisie du motif (regex) pour "Search", recherché dans les fichiers
 /// sélectionnés au moment de l'ouverture du pop-up.
 pub struct SearchState {
@@ -116,6 +132,7 @@ pub enum Modal {
     MakeDir(MakeDirState),
     Mount(MountState),
     Run(RunState),
+    Permissions(PermissionsState),
     Find(FindState),
     FindResults(FindResultsState),
     Search(SearchState),
@@ -135,6 +152,7 @@ pub enum ModalAction {
     CreateDir { for_left: bool, name: String },
     Mount { device: String, mount_point: String },
     RunProgram { path: PathBuf, args: String },
+    ApplyPermissions(PermissionsState),
     RunFind { for_left: bool, pattern: String },
     RunSearch { paths: Vec<PathBuf>, pattern: String },
     JumpTo { for_left: bool, path: PathBuf },
@@ -386,6 +404,53 @@ fn show_run_popup(ctx: &Context, state: &mut RunState) -> ModalAction {
     action
 }
 
+fn show_permissions_popup(ctx: &Context, state: &mut PermissionsState) -> ModalAction {
+    let mut action = ModalAction::None;
+    popup_frame(ctx, DEFAULT_POPUP_WIDTH, |ui| {
+        let label = if state.paths.len() == 1 {
+            state.paths[0].display().to_string()
+        } else {
+            format!("{} items selected", state.paths.len())
+        };
+        ui.label(RichText::new(label).color(Color32::BLACK).strong().size(theme::SMALL_TEXT_SIZE));
+        ui.add_space(8.0);
+
+        #[cfg(unix)]
+        {
+            for (row_label, bits) in
+                [("Owner", &mut state.owner), ("Group", &mut state.group), ("Other", &mut state.other)]
+            {
+                ui.label(RichText::new(row_label).color(Color32::BLACK).size(theme::SMALL_TEXT_SIZE));
+                ui.horizontal(|ui| {
+                    ui.checkbox(&mut bits[0], RichText::new("Read").color(Color32::BLACK).size(theme::SMALL_TEXT_SIZE));
+                    ui.checkbox(&mut bits[1], RichText::new("Write").color(Color32::BLACK).size(theme::SMALL_TEXT_SIZE));
+                    ui.checkbox(&mut bits[2], RichText::new("Execute").color(Color32::BLACK).size(theme::SMALL_TEXT_SIZE));
+                });
+                ui.add_space(6.0);
+            }
+        }
+        #[cfg(not(unix))]
+        {
+            ui.checkbox(
+                &mut state.read_only,
+                RichText::new("Read-only").color(Color32::BLACK).size(theme::SMALL_TEXT_SIZE),
+            );
+            ui.add_space(6.0);
+        }
+
+        ui.add_space(4.0);
+        ui.horizontal(|ui| {
+            if popup_button(ui, "OK") {
+                action = ModalAction::ApplyPermissions(state.clone());
+            }
+            if popup_button(ui, "Cancel") {
+                action = ModalAction::Close;
+            }
+        });
+    });
+    action
+}
+
 fn show_find_popup(ctx: &Context, state: &mut FindState) -> ModalAction {
     let mut action = ModalAction::None;
     popup_frame(ctx, DEFAULT_POPUP_WIDTH, |ui| {
@@ -575,6 +640,7 @@ pub fn show_modal(ctx: &Context, modal: &mut Modal, window_rect: egui::Rect) -> 
         Modal::MakeDir(state) => show_makedir_popup(ctx, state),
         Modal::Mount(state) => show_mount_popup(ctx, state),
         Modal::Run(state) => show_run_popup(ctx, state),
+        Modal::Permissions(state) => show_permissions_popup(ctx, state),
         Modal::Find(state) => show_find_popup(ctx, state),
         Modal::FindResults(state) => show_find_results_popup(ctx, state),
         Modal::Search(state) => show_search_popup(ctx, state),

@@ -77,7 +77,7 @@ impl ButtonBarConfig {
                     Some(b("Makedir", Orange, "makedir")),
                     Some(b("Find", Black, "find")),
                     Some(b("Run", Orange, "run")),
-                    None,
+                    Some(b("Datestamp", Grey, "datestamp")),
                     Some(b("Read", Red, "read")),
                 ],
                 vec![
@@ -86,7 +86,7 @@ impl ButtonBarConfig {
                     mount_button,
                     Some(b("Search", Black, "search")),
                     None,
-                    Some(b("Datestamp", Grey, "datestamp")),
+                    Some(b("Permissions", Grey, "permissions")),
                     Some(b("Hex Read", Red, "hex_read")),
                 ],
                 vec![
@@ -95,7 +95,7 @@ impl ButtonBarConfig {
                     None,
                     None,
                     None,
-                    Some(b("Protect", Grey, "protect")),
+                    Some(b("Arc Ext", Grey, "arc_ext")),
                     Some(b("Edit", Red, "edit")),
                 ],
                 vec![
@@ -104,7 +104,7 @@ impl ButtonBarConfig {
                     None,
                     None,
                     None,
-                    None,
+                    Some(b("Encrypt", Grey, "encrypt")),
                     None,
                 ],
                 vec![
@@ -113,7 +113,7 @@ impl ButtonBarConfig {
                     None,
                     None,
                     None,
-                    Some(b("Arc Ext", Grey, "arc_ext")),
+                    None,
                     None,
                 ],
                 vec![
@@ -122,7 +122,7 @@ impl ButtonBarConfig {
                     None,
                     None,
                     None,
-                    Some(b("Encrypt", Grey, "encrypt")),
+                    None,
                     None,
                 ],
             ],
