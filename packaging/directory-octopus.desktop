@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Directory Octopus
+Comment=Retro-inspired dual-pane file manager
+Exec=directory-octopus
+Icon=directory-octopus
+Terminal=false
+Categories=Utility;FileManager;
+StartupWMClass=directory-octopus

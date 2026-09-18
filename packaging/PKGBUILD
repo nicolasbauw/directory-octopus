@@ -1,0 +1,30 @@
+# Maintainer: Nicolas BAUW <bauw.nicolas@gmail.com>
+pkgname=directory-octopus
+pkgver=1.0.0
+pkgrel=1
+pkgdesc="Retro-inspired dual-pane file manager"
+arch=('x86_64')
+url="https://github.com/nicolasbauw/directory-octopus"
+license=('MIT' 'Apache-2.0')
+depends=('gcc-libs' 'glibc')
+makedepends=('cargo' 'upx')
+source=("$pkgname-$pkgver.tar.gz::https://github.com/nicolasbauw/directory-octopus/archive/refs/tags/v$pkgver.tar.gz")
+sha256sums=('SKIP') # run `updpkgsums` once the v$pkgver tag has been pushed
+
+build() {
+    cd "$pkgname-$pkgver"
+    export RUSTUP_TOOLCHAIN=stable
+    cargo build --release --locked
+    upx --best target/release/directory_octopus
+}
+
+package() {
+    cd "$pkgname-$pkgver"
+    install -Dm755 target/release/directory_octopus "$pkgdir/usr/bin/directory-octopus"
+    install -Dm644 packaging/directory-octopus.desktop \
+        "$pkgdir/usr/share/applications/directory-octopus.desktop"
+    install -Dm644 assets/icon-window.png \
+        "$pkgdir/usr/share/pixmaps/directory-octopus.png"
+    install -Dm644 LICENSE-MIT "$pkgdir/usr/share/licenses/$pkgname/LICENSE-MIT"
+    install -Dm644 LICENSE-APACHE "$pkgdir/usr/share/licenses/$pkgname/LICENSE-APACHE"
+}
