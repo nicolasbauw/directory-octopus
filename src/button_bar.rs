@@ -96,7 +96,7 @@ impl ButtonBarConfig {
                     None,
                     None,
                     Some(b("Protect", Grey, "protect")),
-                    Some(b("Show", Red, "show")),
+                    Some(b("Edit", Red, "edit")),
                 ],
                 vec![
                     Some(b("Root", Blue, "root")),
@@ -105,7 +105,7 @@ impl ButtonBarConfig {
                     None,
                     None,
                     Some(b("Icon Info", Grey, "icon_info")),
-                    Some(b("Play", Red, "play")),
+                    None,
                 ],
                 vec![
                     None,
@@ -114,7 +114,7 @@ impl ButtonBarConfig {
                     None,
                     None,
                     Some(b("Arc Ext", Grey, "arc_ext")),
-                    Some(b("Edit", Red, "edit")),
+                    None,
                 ],
                 vec![
                     None,
@@ -123,7 +123,7 @@ impl ButtonBarConfig {
                     None,
                     None,
                     Some(b("Encrypt", Grey, "encrypt")),
-                    Some(b("Print", Red, "print")),
+                    None,
                 ],
             ],
         }

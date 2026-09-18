@@ -65,6 +65,15 @@ fn hex_dump_lines(bytes: &[u8]) -> Vec<String> {
         .collect()
 }
 
+/// Heuristique simple (façon `git`) : un fichier est considéré texte si ses
+/// premiers octets ne contiennent aucun octet nul.
+fn is_text_file(path: &Path) -> bool {
+    match std::fs::read(path) {
+        Ok(bytes) => !bytes[..bytes.len().min(8192)].contains(&0),
+        Err(_) => false,
+    }
+}
+
 /// Charge `path` en hexadécimal pour le visualisateur plein écran ("Hex
 /// Read"), ou renvoie un pop-up d'erreur si le fichier est illisible.
 fn load_hex_view(path: PathBuf) -> Modal {
@@ -274,6 +283,18 @@ impl DirectoryOctopusApp {
                     Some(path) => Some(load_view_file(path, None)),
                     None => Some(Modal::Error("Select a text file to view.".to_owned())),
                 };
+            }
+            "edit" => {
+                let panel = self.active_panel();
+                let dir = PathBuf::from(&panel.path);
+                let first_file = panel.selected_entries().map(|e| dir.join(&e.name)).find(|p| p.is_file());
+                if let Some(path) = first_file {
+                    if is_text_file(&path) {
+                        if let Err(err) = open::that(&path) {
+                            self.modal = Some(Modal::Error(format!("Could not open {}:\n{err}", path.display())));
+                        }
+                    }
+                }
             }
             "hex_read" => {
                 let panel = self.active_panel();
