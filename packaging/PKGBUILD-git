@@ -1,6 +1,6 @@
 # Maintainer: Nicolas BAUW <bauw.nicolas@gmail.com>
 pkgname=directory-octopus-git
-pkgver=1.0.0.r0.0000000
+pkgver=1.0.0.r19.d9e4fab
 pkgrel=1
 pkgdesc="Retro-inspired dual-pane file manager (git version)"
 arch=('x86_64')
@@ -15,8 +15,11 @@ sha256sums=('SKIP')
 
 pkgver() {
     cd "$pkgname"
-    git describe --long --tags 2>/dev/null | sed 's/^v//;s/\([^-]*-g\)/r\1/;s/-/./g' \
-        || printf "1.0.0.r%s.%s" "$(git rev-list --count HEAD)" "$(git rev-parse --short HEAD)"
+    if _ver=$(git describe --long --tags 2>/dev/null); then
+        printf '%s' "$_ver" | sed 's/^v//;s/\([^-]*-g\)/r\1/;s/-/./g'
+    else
+        printf "1.0.0.r%s.%s" "$(git rev-list --count HEAD)" "$(git rev-parse --short HEAD)"
+    fi
 }
 
 build() {
