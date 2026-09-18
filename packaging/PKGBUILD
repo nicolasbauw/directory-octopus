@@ -23,7 +23,7 @@ package() {
     install -Dm755 target/release/directory_octopus "$pkgdir/usr/bin/directory-octopus"
     install -Dm644 packaging/directory-octopus.desktop \
         "$pkgdir/usr/share/applications/directory-octopus.desktop"
-    install -Dm644 assets/icon-window.png \
+    install -Dm644 assets/icon.png \
         "$pkgdir/usr/share/pixmaps/directory-octopus.png"
     install -Dm644 LICENSE-MIT "$pkgdir/usr/share/licenses/$pkgname/LICENSE-MIT"
     install -Dm644 LICENSE-APACHE "$pkgdir/usr/share/licenses/$pkgname/LICENSE-APACHE"

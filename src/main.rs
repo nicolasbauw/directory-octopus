@@ -16,8 +16,9 @@ fn main() -> eframe::Result<()> {
     let min_size = [theme::logical_width(), theme::logical_height()];
     let default_size = [min_size[0] * 1.15, min_size[1] * 1.4];
 
-    // Icône unique (bureau et fenêtre) : dérivée de assets/icon.png (qui
-    // reste la référence, inchangée), sans le texte.
+    // assets/icon.png est la référence (pleine résolution, utilisée telle
+    // quelle par le packaging) ; icon-window.png en est une version réduite,
+    // suffisante pour l'icône de fenêtre embarquée dans le binaire.
     let icon = eframe::icon_data::from_png_bytes(include_bytes!("../assets/icon-window.png"))
         .expect("l'icône embarquée doit être un PNG valide");
 
