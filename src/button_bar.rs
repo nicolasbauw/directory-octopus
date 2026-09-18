@@ -104,7 +104,7 @@ impl ButtonBarConfig {
                     None,
                     None,
                     None,
-                    Some(b("Encrypt", Grey, "encrypt")),
+                    Some(b("UPX", Grey, "upx")),
                     None,
                 ],
                 vec![

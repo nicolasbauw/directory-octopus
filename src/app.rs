@@ -353,6 +353,24 @@ impl DirectoryOctopusApp {
                     }
                 }
             }
+            "upx" => {
+                let panel = self.active_panel();
+                let dir = PathBuf::from(&panel.path);
+                let first_file = panel.selected_entries().map(|e| dir.join(&e.name)).find(|p| p.is_file());
+                if let Some(path) = first_file {
+                    self.modal = match std::process::Command::new("upx").arg("--best").arg(&path).output() {
+                        Ok(output) if output.status.success() => None,
+                        Ok(output) => {
+                            let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+                            Some(Modal::Error(format!("upx --best {} failed:\n{stderr}", path.display())))
+                        }
+                        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+                            Some(Modal::Info("UPX is not installed.".to_owned()))
+                        }
+                        Err(err) => Some(Modal::Error(format!("Could not run upx:\n{err}"))),
+                    };
+                }
+            }
             "extract" => {
                 let panel = self.active_panel();
                 let dir = PathBuf::from(&panel.path);
