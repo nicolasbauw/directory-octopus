@@ -5,7 +5,7 @@ use crate::button_bar::{show_button_bar, ButtonBarConfig};
 use crate::disk_info;
 use crate::file_ops;
 use crate::panel::{show_panel, PanelState};
-use crate::popups::{show_modal, ConfirmDeleteState, DriveSlotEdit, Modal, ModalAction, RenameState};
+use crate::popups::{show_modal, ConfirmDeleteState, DriveSlotEdit, MakeDirState, Modal, ModalAction, RenameState};
 use crate::status_bar::show_status_bar;
 use crate::theme;
 
@@ -155,6 +155,9 @@ impl DirectoryOctopusApp {
             }
             "copy" => self.copy_or_move(false),
             "move" => self.copy_or_move(true),
+            "makedir" => {
+                self.modal = Some(Modal::MakeDir(MakeDirState { for_left: self.left.active, name: String::new() }));
+            }
             "rename" => {
                 let for_left = self.left.active;
                 let panel = self.active_panel();
@@ -295,6 +298,18 @@ impl eframe::App for DirectoryOctopusApp {
                     if !new_name.is_empty() && new_name != old_name {
                         if let Err(err) = std::fs::rename(dir.join(&old_name), dir.join(new_name)) {
                             eprintln!("Renommage de {old_name:?} échoué : {err}");
+                        }
+                    }
+                    panel.navigate_to(dir);
+                    self.modal = None;
+                }
+                ModalAction::CreateDir { for_left, name } => {
+                    let panel = self.panel_mut(for_left);
+                    let dir = PathBuf::from(&panel.path);
+                    let name = name.trim();
+                    if !name.is_empty() {
+                        if let Err(err) = std::fs::create_dir(dir.join(name)) {
+                            eprintln!("Création du dossier {name:?} échouée : {err}");
                         }
                     }
                     panel.navigate_to(dir);

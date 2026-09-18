@@ -30,6 +30,13 @@ pub struct RenameState {
     pub new_name: String,
 }
 
+/// Création d'un nouveau dossier dans un panneau.
+pub struct MakeDirState {
+    /// `true` si le dossier doit être créé dans le panneau gauche.
+    pub for_left: bool,
+    pub name: String,
+}
+
 /// Confirmation avant suppression (un ou plusieurs dossiers non vides sont
 /// concernés, cf. `file_ops::is_non_empty_dir`).
 pub struct ConfirmDeleteState {
@@ -43,6 +50,7 @@ pub struct ConfirmDeleteState {
 pub enum Modal {
     EditDriveSlot(DriveSlotEdit),
     Rename(RenameState),
+    MakeDir(MakeDirState),
     ConfirmDelete(ConfirmDeleteState),
 }
 
@@ -52,6 +60,7 @@ pub enum ModalAction {
     Close,
     SaveDriveSlot { row_idx: usize, label: String, path: Option<PathBuf> },
     ApplyRename { for_left: bool, old_name: String, new_name: String },
+    CreateDir { for_left: bool, name: String },
     ConfirmDelete { for_left: bool, paths: Vec<PathBuf> },
 }
 
@@ -162,6 +171,24 @@ fn show_rename_popup(ctx: &Context, state: &mut RenameState) -> ModalAction {
     action
 }
 
+fn show_makedir_popup(ctx: &Context, state: &mut MakeDirState) -> ModalAction {
+    let mut action = ModalAction::None;
+    popup_frame(ctx, |ui| {
+        ui.label(RichText::new("Folder name").color(Color32::BLACK).size(theme::SMALL_TEXT_SIZE));
+        styled_text_edit(ui, &mut state.name);
+        ui.add_space(10.0);
+        ui.horizontal(|ui| {
+            if popup_button(ui, "OK") {
+                action = ModalAction::CreateDir { for_left: state.for_left, name: state.name.clone() };
+            }
+            if popup_button(ui, "Cancel") {
+                action = ModalAction::Close;
+            }
+        });
+    });
+    action
+}
+
 fn show_confirm_delete_popup(ctx: &Context, state: &mut ConfirmDeleteState) -> ModalAction {
     let mut action = ModalAction::None;
     popup_frame(ctx, |ui| {
@@ -184,6 +211,7 @@ pub fn show_modal(ctx: &Context, modal: &mut Modal) -> ModalAction {
     match modal {
         Modal::EditDriveSlot(edit) => show_edit_drive_slot_popup(ctx, edit),
         Modal::Rename(state) => show_rename_popup(ctx, state),
+        Modal::MakeDir(state) => show_makedir_popup(ctx, state),
         Modal::ConfirmDelete(state) => show_confirm_delete_popup(ctx, state),
     }
 }
