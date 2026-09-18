@@ -4,6 +4,8 @@ A modern take on Amiga's Directory Opus 4: a retro-styled, dual-pane file
 manager built in Rust with [egui](https://github.com/emilk/egui), featuring
 a bitmap Topaz font and Workbench-style 3D bevels.
 
+*(F1/F2/F3 switch between zoom levels.)*
+
 ## Building
 
 ```sh
